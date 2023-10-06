@@ -5,45 +5,45 @@ use syn::{
     Ident, Path, Token, Type, TypeParamBound, Visibility,
 };
 
-// === Main Macro Syntax === //
+// === CapMacroArg === //
 
 #[derive(Clone)]
-pub struct CapabilityDeclList {
-    pub list: Punctuated<CapabilityDecl, Token![;]>,
+pub struct CapMacroArg {
+    pub list: Punctuated<CapDecl, Token![;]>,
 }
 
 #[derive(Clone)]
-pub struct CapabilityDecl {
+pub struct CapDecl {
     pub visibility: Visibility,
     pub name: Ident,
-    pub kind: CapabilityDeclKind,
+    pub kind: CapDeclKind,
 }
 
 #[derive(Clone)]
-pub enum CapabilityDeclKind {
+pub enum CapDeclKind {
     EqualsTy(Type),
     ImplsTrait(Punctuated<TypeParamBound, Token![+]>),
-    Inherits(Punctuated<CapabilityDeclInherited, Token![,]>),
+    Inherits(Punctuated<CapDeclInheritedElement, Token![,]>),
 }
 
 #[derive(Clone)]
-pub enum CapabilityDeclInherited {
+pub enum CapDeclInheritedElement {
     Ref(Path),
     Mut(Path),
     Bundle(Path),
 }
 
-impl CapabilityDeclInherited {
-    pub fn mode(&self) -> BundleArgMode {
+impl CapDeclInheritedElement {
+    pub fn mode(&self) -> ResolvedBundleExpectedMode {
         match self {
-            CapabilityDeclInherited::Ref(_) => BundleArgMode::Ref,
-            CapabilityDeclInherited::Mut(_) => BundleArgMode::Mut,
-            CapabilityDeclInherited::Bundle(_) => BundleArgMode::Bundle,
+            CapDeclInheritedElement::Ref(_) => ResolvedBundleExpectedMode::Ref,
+            CapDeclInheritedElement::Mut(_) => ResolvedBundleExpectedMode::Mut,
+            CapDeclInheritedElement::Bundle(_) => ResolvedBundleExpectedMode::Bundle,
         }
     }
 
     pub fn path(&self) -> &Path {
-        use CapabilityDeclInherited::*;
+        use CapDeclInheritedElement::*;
 
         match self {
             Ref(p) | Mut(p) | Bundle(p) => p,
@@ -51,15 +51,15 @@ impl CapabilityDeclInherited {
     }
 }
 
-impl Parse for CapabilityDeclList {
+impl Parse for CapMacroArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
-            list: input.parse_terminated(CapabilityDecl::parse, Token![;])?,
+            list: input.parse_terminated(CapDecl::parse, Token![;])?,
         })
     }
 }
 
-impl Parse for CapabilityDecl {
+impl Parse for CapDecl {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             visibility: input.parse()?,
@@ -69,7 +69,7 @@ impl Parse for CapabilityDecl {
     }
 }
 
-impl Parse for CapabilityDeclKind {
+impl Parse for CapDeclKind {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.parse::<Token![=>]>().is_ok() {
             Ok(Self::Inherits(Punctuated::parse_separated_nonempty(input)?))
@@ -105,7 +105,7 @@ impl Parse for CapabilityDeclKind {
     }
 }
 
-impl Parse for CapabilityDeclInherited {
+impl Parse for CapDeclInheritedElement {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Token![ref]) {
             Ok(Self::Ref(input.parse()?))
@@ -117,32 +117,18 @@ impl Parse for CapabilityDeclInherited {
     }
 }
 
-// === Bundle Generation Syntax === //
+// === ResolvedBundleExpectedMode === //
 
 syn::custom_keyword!(bundle);
-syn::custom_keyword!(ty_equals);
-syn::custom_keyword!(ty_implements);
 
 #[derive(Clone)]
-pub struct BundleInput {
-    pub modes_per_input: Vec<BundleArgMode>,
-    pub imported: Vec<BundleImportedInfo>,
-}
-
-#[derive(Clone)]
-pub enum BundleArgMode {
+pub enum ResolvedBundleExpectedMode {
     Ref,
     Mut,
     Bundle,
 }
 
-#[derive(Clone)]
-pub enum BundleImportedInfo {
-    Equals(Ident, Type),
-    Implements(Ident, Punctuated<CapabilityDeclInherited, Token![,]>),
-}
-
-impl Parse for BundleArgMode {
+impl Parse for ResolvedBundleExpectedMode {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.parse::<Token![ref]>().is_ok() {
             Ok(Self::Ref)
@@ -156,25 +142,13 @@ impl Parse for BundleArgMode {
     }
 }
 
-impl ToTokens for BundleArgMode {
+impl ToTokens for ResolvedBundleExpectedMode {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let span = proc_macro2::Span::call_site();
         match self {
-            BundleArgMode::Ref => Token![ref](span).to_tokens(tokens),
-            BundleArgMode::Mut => Token![mut](span).to_tokens(tokens),
-            BundleArgMode::Bundle => bundle(span).to_tokens(tokens),
-        }
-    }
-}
-
-impl Parse for BundleImportedInfo {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.parse::<ty_implements>().is_ok() {
-            todo!()
-        } else if input.parse::<ty_equals>().is_ok() {
-            todo!()
-        } else {
-            Err(input.error("unknown bundle imported info header"))
+            ResolvedBundleExpectedMode::Ref => Token![ref](span).to_tokens(tokens),
+            ResolvedBundleExpectedMode::Mut => Token![mut](span).to_tokens(tokens),
+            ResolvedBundleExpectedMode::Bundle => bundle(span).to_tokens(tokens),
         }
     }
 }

@@ -7,18 +7,18 @@ mod syntax;
 
 #[proc_macro]
 pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let inp = parse_macro_input!(inp as syntax::CapabilityDeclList);
+    let inp = parse_macro_input!(inp as syntax::CapMacroArg);
     let mut out = proc_macro2::TokenStream::default();
 
     for decl in &inp.list {
-        let syntax::CapabilityDecl {
+        let syntax::CapDecl {
             visibility,
             name,
             kind,
         } = decl;
 
         match kind {
-            syntax::CapabilityDeclKind::EqualsTy(ty) => {
+            syntax::CapDeclKind::EqualsTy(ty) => {
                 let id = new_unique_ident();
                 let (export, export_name) =
                     make_macro_exporter(quote! {{ id = #id, exact_type = #ty }});
@@ -28,7 +28,7 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     #visibility use #export_name as #name;
                 });
             }
-            syntax::CapabilityDeclKind::ImplsTrait(tb) => {
+            syntax::CapDeclKind::ImplsTrait(tb) => {
                 let id = new_unique_ident();
                 let (export, export_name) =
                     make_macro_exporter(quote! {{ id = #id, trait_bound = #tb }});
@@ -38,7 +38,7 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     #visibility use #export_name as #name;
                 });
             }
-            syntax::CapabilityDeclKind::Inherits(inh) => {
+            syntax::CapDeclKind::Inherits(inh) => {
                 let inh_config = inh
                     .iter()
                     .map(|v| v.mode().to_token_stream())
