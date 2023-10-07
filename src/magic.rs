@@ -1,10 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use proc_macro2::{Ident, Span, TokenStream};
-use quote::quote;
+use proc_macro2::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
+use quote::{quote, ToTokens};
 use syn::{
     braced,
     parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    token::Brace,
     Token,
 };
 
@@ -94,5 +96,103 @@ impl<U: Parse, D: Parse> Parse for ImportedMacroInfo<U, D> {
             supplied,
             collected,
         })
+    }
+}
+
+// === Braced === //
+
+#[derive(Clone)]
+pub struct Braced<V> {
+    pub brace: Brace,
+    pub value: V,
+}
+
+impl<V: Parse> Parse for Braced<V> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let value;
+
+        Ok(Self {
+            brace: braced!(value in input),
+            value: value.parse()?,
+        })
+    }
+}
+
+impl<V: ToTokens> ToTokens for Braced<V> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let mut group = Group::new(Delimiter::Brace, self.value.to_token_stream());
+        group.set_span(self.brace.span.join());
+        tokens.extend([TokenTree::Group(group)]);
+    }
+}
+
+// === StructuredKv === //
+
+pub struct StructuredKv<K, V> {
+    pub key: K,
+    pub eq: Token![=],
+    pub value: Braced<V>,
+}
+
+impl<K, V> Clone for StructuredKv<K, V>
+where
+    K: Clone,
+    V: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            eq: self.eq,
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl<K: Parse, V: Parse> Parse for StructuredKv<K, V> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            key: input.parse()?,
+            eq: input.parse()?,
+            value: input.parse()?,
+        })
+    }
+}
+
+impl<K: ToTokens, V: ToTokens> ToTokens for StructuredKv<K, V> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.key.to_tokens(tokens);
+        self.eq.to_tokens(tokens);
+        self.value.to_tokens(tokens)
+    }
+}
+
+// === StructuredArray === //
+
+pub struct StructuredArray<V> {
+    pub values: Punctuated<Braced<V>, Token![,]>,
+}
+
+impl<V> Clone for StructuredArray<V>
+where
+    V: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            values: self.values.clone(),
+        }
+    }
+}
+
+impl<V: Parse> Parse for StructuredArray<V> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            values: Punctuated::parse_terminated(input)?,
+        })
+    }
+}
+
+impl<V: ToTokens> ToTokens for StructuredArray<V> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.values.to_tokens(tokens);
     }
 }

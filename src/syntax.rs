@@ -5,6 +5,13 @@ use syn::{
     Ident, Path, Token, Type, TypeParamBound, Visibility,
 };
 
+use crate::magic::{StructuredArray, StructuredKv};
+
+// === Custom keywords === //
+
+syn::custom_keyword!(id);
+syn::custom_keyword!(bundle);
+
 // === CapMacroArg === //
 
 #[derive(Clone)]
@@ -117,9 +124,30 @@ impl Parse for CapDeclInheritedElement {
     }
 }
 
-// === ResolvedBundleExpectedMode === //
+// === CapItemMeta === //
 
-syn::custom_keyword!(bundle);
+#[derive(Clone)]
+pub struct CapItemMeta {
+    pub id: StructuredKv<id, Ident>,
+    pub kind: CapItemKindMeta,
+}
+
+#[derive(Clone)]
+pub enum CapItemKindMeta {
+    EqualsTy(Type),
+    ImplsTrait(Punctuated<TypeParamBound, Token![+]>),
+    Bundle(CapItemBundleMeta),
+}
+
+#[derive(Clone)]
+pub struct CapItemBundleMeta {
+    pub members: StructuredArray<CapItemBundleMemberMeta>,
+}
+
+#[derive(Clone)]
+pub struct CapItemBundleMemberMeta {}
+
+// === ResolvedBundleExpectedMode === //
 
 #[derive(Clone)]
 pub enum ResolvedBundleExpectedMode {
