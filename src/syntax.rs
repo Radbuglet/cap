@@ -1,16 +1,10 @@
-use quote::ToTokens;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     Ident, Path, Token, Type, TypeParamBound, Visibility,
 };
 
-use crate::magic::{StructuredArray, StructuredKv};
-
-// === Custom keywords === //
-
-syn::custom_keyword!(id);
-syn::custom_keyword!(bundle);
+use crate::magic::{structured, Nop, StructuredArray};
 
 // === CapMacroArg === //
 
@@ -43,9 +37,9 @@ pub enum CapDeclInheritedElement {
 impl CapDeclInheritedElement {
     pub fn mode(&self) -> ResolvedBundleExpectedMode {
         match self {
-            CapDeclInheritedElement::Ref(_) => ResolvedBundleExpectedMode::Ref,
-            CapDeclInheritedElement::Mut(_) => ResolvedBundleExpectedMode::Mut,
-            CapDeclInheritedElement::Bundle(_) => ResolvedBundleExpectedMode::Bundle,
+            CapDeclInheritedElement::Ref(_) => ResolvedBundleExpectedMode::Ref(Nop),
+            CapDeclInheritedElement::Mut(_) => ResolvedBundleExpectedMode::Mut(Nop),
+            CapDeclInheritedElement::Bundle(_) => ResolvedBundleExpectedMode::Bundle(Nop),
         }
     }
 
@@ -124,59 +118,30 @@ impl Parse for CapDeclInheritedElement {
     }
 }
 
-// === CapItemMeta === //
+// === CapProbe === //
 
-#[derive(Clone)]
-pub struct CapItemMeta {
-    pub id: StructuredKv<id, Ident>,
-    pub kind: CapItemKindMeta,
-}
-
-#[derive(Clone)]
-pub enum CapItemKindMeta {
-    EqualsTy(Type),
-    ImplsTrait(Punctuated<TypeParamBound, Token![+]>),
-    Bundle(CapItemBundleMeta),
-}
-
-#[derive(Clone)]
-pub struct CapItemBundleMeta {
-    pub members: StructuredArray<CapItemBundleMemberMeta>,
-}
-
-#[derive(Clone)]
-pub struct CapItemBundleMemberMeta {}
-
-// === ResolvedBundleExpectedMode === //
-
-#[derive(Clone)]
-pub enum ResolvedBundleExpectedMode {
-    Ref,
-    Mut,
-    Bundle,
-}
-
-impl Parse for ResolvedBundleExpectedMode {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.parse::<Token![ref]>().is_ok() {
-            Ok(Self::Ref)
-        } else if input.parse::<Token![mut]>().is_ok() {
-            Ok(Self::Mut)
-        } else if input.parse::<bundle>().is_ok() {
-            Ok(Self::Bundle)
-        } else {
-            Err(input.error("unknown bundle mode"))
-        }
+structured! {
+    #[derive(Clone)]
+    pub struct CapProbeArgs {
+        pub expected: StructuredArray<ResolvedBundleExpectedMode>,
     }
-}
 
-impl ToTokens for ResolvedBundleExpectedMode {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let span = proc_macro2::Span::call_site();
-        match self {
-            ResolvedBundleExpectedMode::Ref => Token![ref](span).to_tokens(tokens),
-            ResolvedBundleExpectedMode::Mut => Token![mut](span).to_tokens(tokens),
-            ResolvedBundleExpectedMode::Bundle => bundle(span).to_tokens(tokens),
-        }
+    #[derive(Clone)]
+    pub enum ResolvedBundleExpectedMode {
+        Ref(Nop),
+        Mut(Nop),
+        Bundle(Nop),
+    }
+
+    #[derive(Clone)]
+    pub enum CapProbeResult {
+        ExactType(Nop),
+        ImplsTrait(Nop),
+        Bundle(CapProbeBundleResult),
+    }
+
+    #[derive(Clone)]
+    pub struct CapProbeBundleResult {
+
     }
 }

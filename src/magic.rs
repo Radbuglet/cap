@@ -126,73 +126,214 @@ impl<V: ToTokens> ToTokens for Braced<V> {
     }
 }
 
-// === StructuredKv === //
+// === Structured === //
 
-pub struct StructuredKv<K, V> {
-    pub key: K,
-    pub eq: Token![=],
-    pub value: Braced<V>,
+#[doc(hidden)]
+#[allow(dead_code)]
+pub(crate) mod structured_macro_internals {
+    use syn::Token;
+
+    #[allow(unused_imports)]
+    pub(crate) use super::structured;
+
+    pub use {
+        proc_macro2::{Delimiter, Group, Ident, Span, TokenStream, TokenTree},
+        quote::ToTokens,
+        std::{
+            iter::Extend,
+            result::Result::{Err, Ok},
+            stringify,
+        },
+        syn::{
+            braced,
+            parse::{Parse, ParseStream},
+            Result as SynResult,
+        },
+    };
+
+    pub fn parse_dyn_kw(input: ParseStream, key: &str) -> syn::Result<Ident> {
+        if input
+            .cursor()
+            .ident()
+            .is_some_and(|(ident, _)| ident == key)
+        {
+            Ok(input.parse().unwrap())
+        } else {
+            Err(input.error(format!("Expected identifier {key:?}")))
+        }
+    }
+
+    pub fn parse_grouped<V: Parse>(input: ParseStream) -> syn::Result<V> {
+        let braced;
+        braced!(braced in input);
+        let result = braced.parse::<V>()?;
+        if !braced.is_empty() {
+            return Err(braced.error("Unexpected."));
+        }
+
+        Ok(result)
+    }
+
+    pub fn parse_kv<V: Parse>(input: ParseStream, key: &str) -> syn::Result<V> {
+        parse_dyn_kw(input, key)?;
+        input.parse::<Token![=]>()?;
+        parse_grouped(input)
+    }
 }
 
-impl<K, V> Clone for StructuredKv<K, V>
-where
-    K: Clone,
-    V: Clone,
-{
+#[allow(unused_macros)]
+macro_rules! structured {
+    () => {
+        /* muncher base case */
+    };
+    (
+		$(#[$attr:meta])*
+		$vis:vis struct $name:ident {
+			$(
+				$(#[$f_attr:meta])*
+				$f_vis:vis $f_name:ident: $f_ty:ty
+			),*
+			$(,)?
+		}
+
+		$($rest:tt)*
+	) => {
+		$(#[$attr])*
+		$vis struct $name {
+			$(
+				$(#[$f_attr])*
+				$f_vis $f_name: $f_ty
+			),*
+		}
+
+        impl $crate::magic::structured_macro_internals::Parse for $name {
+			#[allow(unused)]
+			fn parse(input: $crate::magic::structured_macro_internals::ParseStream) -> $crate::magic::structured_macro_internals::SynResult<Self> {
+				let input_inner;
+				$crate::magic::structured_macro_internals::braced!(input_inner in input);
+
+				$crate::magic::structured_macro_internals::Ok(Self {
+					$($f_name: $crate::magic::structured_macro_internals::parse_kv(
+						&input_inner,
+						$crate::magic::structured_macro_internals::stringify!($f_name),
+					)?,)*
+				})
+			}
+		}
+
+		impl $crate::magic::structured_macro_internals::ToTokens for $name {
+			fn to_tokens(&self, tokens: &mut $crate::magic::structured_macro_internals::TokenStream) {
+				#[allow(unused_mut)]
+				let mut inner = $crate::magic::structured_macro_internals::TokenStream::new();
+
+				$($crate::magic::structured_macro_internals::ToTokens::to_tokens(&self.$f_name, &mut inner);)*
+
+				$crate::magic::structured_macro_internals::Extend::extend(
+					&mut *tokens,
+					[$crate::magic::structured_macro_internals::TokenTree::Group(
+						$crate::magic::structured_macro_internals::Group::new(
+							$crate::magic::structured_macro_internals::Delimiter::Brace,
+							inner,
+						),
+					)],
+				);
+			}
+		}
+
+		$crate::magic::structured_macro_internals::structured!($($rest)*);
+    };
+	(
+		$(#[$attr:meta])*
+		$vis:vis enum $name:ident {
+			$($f_name:ident($f_vis:vis $f_ty:ty)),*
+			$(,)?
+		}
+
+		$($rest:tt)*
+	) => {
+		$(#[$attr])*
+		$vis enum $name {
+			$($f_name($f_vis $f_ty)),*
+		}
+
+        impl $crate::magic::structured_macro_internals::Parse for $name {
+			#[allow(unused)]
+			fn parse(input: $crate::magic::structured_macro_internals::ParseStream) -> $crate::magic::structured_macro_internals::SynResult<Self> {
+				$(if $crate::magic::structured_macro_internals::parse_dyn_kw(input, $crate::magic::structured_macro_internals::stringify!($f_name)).is_ok() {
+					return $crate::magic::structured_macro_internals::parse_grouped(input);
+				})*
+
+				$crate::magic::structured_macro_internals::Err(input.error("Unexpected enum variant."))
+			}
+		}
+
+		impl $crate::magic::structured_macro_internals::ToTokens for $name {
+			fn to_tokens(&self, tokens: &mut $crate::magic::structured_macro_internals::TokenStream) {
+				match self {
+					$(Self::$f_name(inner) => {
+						$crate::magic::structured_macro_internals::Extend::extend(
+							&mut *tokens,
+							[
+								$crate::magic::structured_macro_internals::TokenTree::Ident(
+									$crate::magic::structured_macro_internals::Ident::new(
+										$crate::magic::structured_macro_internals::stringify!($f_name),
+										$crate::magic::structured_macro_internals::Span::call_site(),
+									),
+								),
+								$crate::magic::structured_macro_internals::TokenTree::Group(
+									$crate::magic::structured_macro_internals::Group::new(
+										$crate::magic::structured_macro_internals::Delimiter::Brace,
+										$crate::magic::structured_macro_internals::ToTokens::into_token_stream(inner),
+									),
+								),
+							],
+						);
+					},)*
+				}
+			}
+		}
+
+		$crate::magic::structured_macro_internals::structured!($($rest)*);
+    };
+}
+
+pub(crate) use structured;
+
+#[derive(Clone)]
+pub struct Nop;
+
+impl Parse for Nop {
+    fn parse(_input: ParseStream) -> syn::Result<Self> {
+        Ok(Self)
+    }
+}
+
+impl ToTokens for Nop {
+    fn to_tokens(&self, _tokens: &mut TokenStream) {}
+}
+
+pub struct StructuredArray<T> {
+    pub contents: Punctuated<T, Token![,]>,
+}
+
+impl<T: Clone> Clone for StructuredArray<T> {
     fn clone(&self) -> Self {
         Self {
-            key: self.key.clone(),
-            eq: self.eq,
-            value: self.value.clone(),
+            contents: self.contents.clone(),
         }
     }
 }
 
-impl<K: Parse, V: Parse> Parse for StructuredKv<K, V> {
+impl<T: Parse> Parse for StructuredArray<T> {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
-            key: input.parse()?,
-            eq: input.parse()?,
-            value: input.parse()?,
+            contents: Punctuated::parse_terminated(input)?,
         })
     }
 }
 
-impl<K: ToTokens, V: ToTokens> ToTokens for StructuredKv<K, V> {
+impl<T: ToTokens> ToTokens for StructuredArray<T> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.key.to_tokens(tokens);
-        self.eq.to_tokens(tokens);
-        self.value.to_tokens(tokens)
-    }
-}
-
-// === StructuredArray === //
-
-pub struct StructuredArray<V> {
-    pub values: Punctuated<Braced<V>, Token![,]>,
-}
-
-impl<V> Clone for StructuredArray<V>
-where
-    V: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            values: self.values.clone(),
-        }
-    }
-}
-
-impl<V: Parse> Parse for StructuredArray<V> {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(Self {
-            values: Punctuated::parse_terminated(input)?,
-        })
-    }
-}
-
-impl<V: ToTokens> ToTokens for StructuredArray<V> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.values.to_tokens(tokens);
+        self.contents.to_tokens(tokens);
     }
 }
