@@ -1,10 +1,10 @@
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Ident, Path, Token, Type, TypeParamBound, Visibility,
+    Ident, LitBool, Path, Token, Type, TypeParamBound, Visibility,
 };
 
-use crate::magic::{structured, Nop, StructuredArray};
+use crate::magic::{structured, Nop, SynArray};
 
 // === CapMacroArg === //
 
@@ -108,9 +108,9 @@ impl Parse for CapDeclKind {
 
 impl Parse for CapDeclInheritedElement {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Token![ref]) {
+        if input.parse::<Token![ref]>().is_ok() {
             Ok(Self::Ref(input.parse()?))
-        } else if input.peek(Token![mut]) {
+        } else if input.parse::<Token![mut]>().is_ok() {
             Ok(Self::Mut(input.parse()?))
         } else {
             Ok(Self::Bundle(input.parse()?))
@@ -123,7 +123,13 @@ impl Parse for CapDeclInheritedElement {
 structured! {
     #[derive(Clone)]
     pub struct CapProbeArgs {
-        pub expected: StructuredArray<ResolvedBundleExpectedMode>,
+        pub expected: SynArray<CapProbeArgReq>,
+    }
+
+    #[derive(Clone)]
+    pub struct CapProbeArgReq {
+        pub path: Path,
+        pub mode: ResolvedBundleExpectedMode,
     }
 
     #[derive(Clone)]
@@ -134,14 +140,26 @@ structured! {
     }
 
     #[derive(Clone)]
-    pub enum CapProbeResult {
-        ExactType(Nop),
-        ImplsTrait(Nop),
+    pub enum CapProbeEntry {
+        ExactType(CapProbeDecl),
+        ImplsTrait(CapProbeDecl),
         Bundle(CapProbeBundleResult),
     }
 
     #[derive(Clone)]
-    pub struct CapProbeBundleResult {
+    pub struct CapProbeDecl {
+        pub id: Ident,
+    }
 
+    #[derive(Clone)]
+    pub struct CapProbeBundleResult {
+        pub members: SynArray<CapProbeBundleMember>,
+    }
+
+    #[derive(Clone)]
+    pub struct CapProbeBundleMember {
+        pub id: Ident,
+        pub is_mutable: LitBool,
+        pub re_exported_as: Ident,
     }
 }
