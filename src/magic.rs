@@ -24,7 +24,7 @@ pub fn new_unique_ident() -> Ident {
 
     let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
     let ident_string = format!("__cap_random_ident_{COMPILATION_TAG}_{unique_id}");
-    Ident::new(ident_string.as_str(), Span::mixed_site())
+    Ident::new(ident_string.as_str(), Span::call_site())
 }
 
 // === Exporter-importer protocol === //
@@ -35,7 +35,7 @@ pub fn make_macro_exporter_raw(id: Ident, data: TokenStream) -> TokenStream {
         #[macro_export]
         macro_rules! #id {
             (@__extract_macro_data $path:path => $($args:tt)*) => {
-                $path!(@__extract_macro_data $($args)* #data);
+                $path! { @__extract_macro_data $($args)* #data }
             };
         }
     }
@@ -44,7 +44,7 @@ pub fn make_macro_exporter_raw(id: Ident, data: TokenStream) -> TokenStream {
 pub fn make_macro_importer_raw(base_args: TokenStream, macro_chain: &[TokenStream]) -> TokenStream {
     if let Some((first_macro, rest)) = macro_chain.split_first() {
         quote! {
-            #first_macro!(@__extract_macro_data #(#rest)=>* => #base_args);
+            #first_macro! { @__extract_macro_data #(#rest)=>* => #base_args }
         }
     } else {
         TokenStream::default()
@@ -172,7 +172,7 @@ pub(crate) mod structured_macro_internals {
     }
 
     pub fn write_dyn_kw(stream: &mut TokenStream, key: &str) {
-        stream.extend([TokenTree::Ident(Ident::new(key, Span::mixed_site()))]);
+        stream.extend([TokenTree::Ident(Ident::new(key, Span::call_site()))]);
     }
 
     pub fn parse_grouped<V: Parse>(input: ParseStream) -> syn::Result<V> {
@@ -202,7 +202,7 @@ pub(crate) mod structured_macro_internals {
 
     pub fn write_kv(stream: &mut TokenStream, key: &str, value: &impl ToTokens) {
         write_dyn_kw(stream, key);
-        Token![=](Span::mixed_site()).to_tokens(stream);
+        Token![=](Span::call_site()).to_tokens(stream);
         write_group(stream, |stream| value.to_tokens(stream));
     }
 }

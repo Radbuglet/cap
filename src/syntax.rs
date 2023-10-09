@@ -1,7 +1,8 @@
+use quote::ToTokens;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Ident, LitBool, Path, Token, Type, TypeParamBound, Visibility,
+    Expr, Ident, LitBool, Path, Token, Type, TypeParamBound, Visibility,
 };
 
 use crate::magic::{structured, Nop, SynArray};
@@ -168,3 +169,38 @@ structured! {
         pub re_exported_as: Ident,
     }
 }
+
+// === CxMacroArg === //
+
+#[derive(Clone)]
+pub struct CxMacroArg {
+    pub expr: Expr, // FIXME: Limit to place expressions
+    pub arr: Token![=>],
+    pub optional_mut: Option<Token![mut]>,
+    pub path: Path,
+}
+
+impl Parse for CxMacroArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            expr: input.parse()?,
+            arr: input.parse()?,
+            optional_mut: input.parse()?,
+            path: input.parse()?,
+        })
+    }
+}
+
+impl ToTokens for CxMacroArg {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.expr.to_tokens(tokens);
+        self.arr.to_tokens(tokens);
+        self.optional_mut.to_tokens(tokens);
+        self.path.to_tokens(tokens);
+    }
+}
+
+// === CxProbe === //
+
+pub type CxProbeSupplied = CxMacroArg;
+pub type CxProbeCollected = CapProbeEntry;

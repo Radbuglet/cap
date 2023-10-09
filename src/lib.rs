@@ -4,7 +4,10 @@ use magic::{make_macro_exporter, make_macro_importer, new_unique_ident};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{parse_macro_input, spanned::Spanned, Error, LitBool};
-use syntax::{CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied};
+use syntax::{
+    CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied, CxMacroArg,
+    CxProbeCollected, CxProbeSupplied,
+};
 
 use crate::{
     magic::SynArray,
@@ -106,6 +109,7 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
     out.into()
 }
 
+#[doc(hidden)]
 #[proc_macro]
 pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let inp = parse_macro_input!(
@@ -234,8 +238,8 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
             members: SynArray::from_iter(members.iter().map(|(member_id, member)| {
                 CapProbeBundleMember {
                     id: member_id.clone(),
-                    is_mutable: LitBool::new(member.is_mutable, Span::mixed_site()),
-                    is_trait: LitBool::new(member.is_trait, Span::mixed_site()),
+                    is_mutable: LitBool::new(member.is_mutable, Span::call_site()),
+                    is_trait: LitBool::new(member.is_trait, Span::call_site()),
                     re_exported_as: member_id.clone(),
                 }
             })),
@@ -250,7 +254,7 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
             }
 
             #visibility struct Bundle<'a, B: ?Sized + TyBundle> {
-                _ty: [&'a B; 0],
+                #visibility _ty: [&'a B; 0],
                 #struct_bundle
             }
 
@@ -262,4 +266,62 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
         #visibility use #id as #name;
     }
     .into()
+}
+
+#[proc_macro]
+pub fn cx(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let inp = parse_macro_input!(inp as CxMacroArg);
+    let path = inp.path.to_token_stream();
+
+    let getter = make_macro_importer(inp, &[path, quote! { ::cap::__cx_process_bundle }]);
+
+    quote! {{ #getter }}.into()
+}
+
+#[proc_macro]
+pub fn __cx_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let inp =
+        parse_macro_input!(inp as magic::ImportedMacroInfo<CxProbeSupplied, CxProbeCollected>);
+
+    let expr = &inp.supplied.expr;
+
+    match &inp.collected[0] {
+        CapProbeEntry::Component(info) => {
+            let prefix = get_reborrow_prefix(inp.supplied.optional_mut.is_some());
+            let id = info.id.clone();
+            quote! { #prefix #expr.#id }
+        }
+        CapProbeEntry::Bundle(info) => {
+            let base_path = inp.supplied.path;
+            let field_getters = info.members.iter().map(|member| {
+                let prefix = get_reborrow_prefix(member.is_mutable.value);
+                let id = &member.id;
+
+                quote! { #id: #prefix #expr.#id }
+            });
+
+            let infer_bounds = info.members.iter().filter_map(|member| {
+                member.is_trait.value.then(|| {
+                    let id = &member.id;
+                    quote! { #id = _ }
+                })
+            });
+
+            quote! {
+                #base_path::Bundle::<dyn #base_path::TyBundle<#(#infer_bounds),*>> {
+                    _ty: [],
+                    #(#field_getters),*
+                }
+            }
+        }
+    }
+    .into()
+}
+
+fn get_reborrow_prefix(mutable: bool) -> proc_macro2::TokenStream {
+    if mutable {
+        quote! { &mut * }
+    } else {
+        quote! { &* }
+    }
 }
