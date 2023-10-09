@@ -24,26 +24,21 @@ pub fn new_unique_ident() -> Ident {
 
     let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
     let ident_string = format!("__cap_random_ident_{COMPILATION_TAG}_{unique_id}");
-    Ident::new(ident_string.as_str(), Span::call_site())
+    Ident::new(ident_string.as_str(), Span::mixed_site())
 }
 
 // === Exporter-importer protocol === //
 
-pub fn make_macro_exporter_raw(data: TokenStream) -> (TokenStream, Ident) {
-    let ident = new_unique_ident();
-
-    (
-        quote! {
-            #[doc(hidden)]
-            #[macro_export]
-            macro_rules! #ident {
-                (@__extract_macro_data $path:path => $($args:tt)*) => {
-                    $path!(@__extract_macro_data $($args)* #data);
-                };
-            }
-        },
-        ident,
-    )
+pub fn make_macro_exporter_raw(id: Ident, data: TokenStream) -> TokenStream {
+    quote! {
+        #[doc(hidden)]
+        #[macro_export]
+        macro_rules! #id {
+            (@__extract_macro_data $path:path => $($args:tt)*) => {
+                $path!(@__extract_macro_data $($args)* #data);
+            };
+        }
+    }
 }
 
 pub fn make_macro_importer_raw(base_args: TokenStream, macro_chain: &[TokenStream]) -> TokenStream {
@@ -61,8 +56,8 @@ syn::custom_keyword!(__extract_macro_data);
 // === Import Parsing === //
 
 // Dispatching
-pub fn make_macro_exporter<D: ToTokens>(data: D) -> (TokenStream, Ident) {
-    make_macro_exporter_raw(quote! {{ #data }})
+pub fn make_macro_exporter<D: ToTokens>(id: Ident, data: D) -> TokenStream {
+    make_macro_exporter_raw(id, quote! {{ #data }})
 }
 
 pub fn make_macro_importer<U: ToTokens>(base_args: U, macro_chain: &[TokenStream]) -> TokenStream {
@@ -177,7 +172,7 @@ pub(crate) mod structured_macro_internals {
     }
 
     pub fn write_dyn_kw(stream: &mut TokenStream, key: &str) {
-        stream.extend([TokenTree::Ident(Ident::new(key, Span::call_site()))]);
+        stream.extend([TokenTree::Ident(Ident::new(key, Span::mixed_site()))]);
     }
 
     pub fn parse_grouped<V: Parse>(input: ParseStream) -> syn::Result<V> {
@@ -207,7 +202,7 @@ pub(crate) mod structured_macro_internals {
 
     pub fn write_kv(stream: &mut TokenStream, key: &str, value: &impl ToTokens) {
         write_dyn_kw(stream, key);
-        Token![=](Span::call_site()).to_tokens(stream);
+        Token![=](Span::mixed_site()).to_tokens(stream);
         write_group(stream, |stream| value.to_tokens(stream));
     }
 }

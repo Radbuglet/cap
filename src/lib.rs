@@ -1,9 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use magic::{make_macro_exporter, make_macro_importer, new_unique_ident};
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::parse_macro_input;
-use syntax::{CapProbeArgReq, CapProbeArgs, CapProbeDecl, CapProbeEntry};
+use syn::{parse_macro_input, spanned::Spanned, Error, LitBool};
+use syntax::{CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied};
+
+use crate::{
+    magic::SynArray,
+    syntax::{CapProbeBundle, CapProbeBundleMember},
+};
 
 mod magic;
 mod syntax;
@@ -23,40 +29,50 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
         match kind {
             syntax::CapDeclKind::EqualsTy(ty) => {
                 let id = new_unique_ident();
-                let (export, export_name) =
-                    make_macro_exporter(CapProbeEntry::ExactType(CapProbeDecl { id }));
+                let export = make_macro_exporter(
+                    id.clone(),
+                    CapProbeEntry::Component(CapProbeComponent {
+                        id: id.clone(),
+                        is_trait: LitBool::new(false, Span::call_site()),
+                    }),
+                );
 
                 out.extend(quote! {
                     #export
 
-                    #visibility mod #export_name {
+                    #visibility mod #id {
                         #[allow(unused_imports)]
                         use super::*;
 
-                        pub type ExactType = #ty;
+                        pub type CompTy = #ty;
                     }
 
-                    #visibility use #export_name as #name;
+                    #visibility use #id as #name;
                 });
             }
             syntax::CapDeclKind::ImplsTrait(tb) => {
                 let id = new_unique_ident();
-                let (export, export_name) =
-                    make_macro_exporter(CapProbeEntry::ImplsTrait(CapProbeDecl { id }));
+                let export = make_macro_exporter(
+                    id.clone(),
+                    CapProbeEntry::Component(CapProbeComponent {
+                        id: id.clone(),
+                        is_trait: LitBool::new(true, Span::call_site()),
+                    }),
+                );
 
                 out.extend(quote! {
                     #export
 
-                    #visibility mod #export_name {
+                    #visibility mod #id {
                         #[allow(unused_imports)]
                         use super::*;
 
-                        pub trait ExactTrait: #tb {}
+                        pub trait CompTy: #tb {}
 
-                        impl<__Target: ?Sized + #tb> ExactTrait for __Target {}
+                        impl<__Target: ?Sized + #tb> CompTy for __Target {}
                     }
 
-                    #visibility use #export_name as #name;
+                    #visibility use #id as #name;
                 });
             }
             syntax::CapDeclKind::Inherits(inh) => {
@@ -76,7 +92,11 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 process_paths.push(quote! { ::cap::__cap_process_bundle });
 
                 out.extend(make_macro_importer(
-                    CapProbeArgs { expected },
+                    CapProbeSupplied {
+                        visibility: visibility.clone(),
+                        name: name.clone(),
+                        expected,
+                    },
                     &process_paths,
                 ));
             }
@@ -89,16 +109,157 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro]
 pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let inp = parse_macro_input!(
-        inp as magic::ImportedMacroInfo<syntax::CapProbeArgs, syntax::CapProbeEntry>
+        inp as magic::ImportedMacroInfo<syntax::CapProbeSupplied, syntax::CapProbeEntry>
     );
+    let name = &inp.supplied.name;
+    let visibility = &inp.supplied.visibility;
 
-    for (expected, collected) in inp.supplied.expected.iter().zip(inp.collected.iter()) {
+    // Collect members
+    let mut errors = TokenStream::new();
+    let mut members = HashMap::new();
+
+    #[derive(Debug)]
+    struct MemberInfo {
+        is_mutable: bool,
+        is_trait: bool,
+        fetch_from: TokenStream,
+    }
+
+    for (expected, collected) in inp.supplied.expected.iter().zip(inp.collected) {
         match collected {
-            CapProbeEntry::ExactType(ty) => {}
-            CapProbeEntry::ImplsTrait(tb) => {}
-            CapProbeEntry::Bundle(_) => {}
+            CapProbeEntry::Component(ty) => {
+                let mutability = match expected.mode {
+                    syntax::BundleElementMode::Ref(_) => false,
+                    syntax::BundleElementMode::Mut(_) => true,
+                    syntax::BundleElementMode::Bundle(_) => {
+                        errors.extend(
+                            Error::new(
+                                expected.path.span(),
+                                "Cannot import component definition directly like a bundle. Please specify its mutability.",
+                            )
+                            .into_compile_error(),
+                        );
+                        continue;
+                    }
+                };
+
+                match members.entry(ty.id.clone()) {
+                    Entry::Vacant(entry) => {
+                        let macro_path = &expected.path;
+
+                        entry.insert(MemberInfo {
+                            is_mutable: mutability,
+                            is_trait: ty.is_trait.value,
+                            fetch_from: quote! { #macro_path::CompTy },
+                        });
+                    }
+                    Entry::Occupied(entry) => {
+                        entry.into_mut().is_mutable |= mutability;
+                    }
+                }
+            }
+            CapProbeEntry::Bundle(bu) => {
+                if !matches!(expected.mode, syntax::BundleElementMode::Bundle(_)) {
+                    errors.extend(
+                        Error::new(
+                            expected.path.span(),
+                            "cannot specify mutability for an entire bundle",
+                        )
+                        .into_compile_error(),
+                    );
+                    continue;
+                };
+
+                for member in &*bu.members {
+                    match members.entry(member.id.clone()) {
+                        Entry::Vacant(entry) => {
+                            let macro_path = &expected.path;
+                            let re_exported_as = &member.re_exported_as;
+
+                            entry.insert(MemberInfo {
+                                is_mutable: member.is_mutable.value,
+                                is_trait: member.is_trait.value,
+                                fetch_from: quote! { #macro_path::#re_exported_as },
+                            });
+                        }
+                        Entry::Occupied(entry) => {
+                            entry.into_mut().is_mutable |= member.is_mutable.value;
+                        }
+                    }
+                }
+            }
         }
     }
 
-    Default::default()
+    if !errors.is_empty() {
+        return errors.into();
+    }
+
+    // Generate macro
+    let id = new_unique_ident();
+    let mut import_block = TokenStream::new();
+    let mut ty_bundle = TokenStream::new();
+    let mut struct_bundle = TokenStream::new();
+
+    for (member_id, member) in &members {
+        let fetch = &member.fetch_from;
+
+        import_block.extend(quote! {
+            #visibility use super::#fetch as #member_id;
+        });
+
+        let ref_header = if member.is_mutable {
+            quote! { &'a mut }
+        } else {
+            quote! { &'a }
+        };
+
+        if member.is_trait {
+            ty_bundle.extend(quote! {
+                type #member_id: #member_id;
+            });
+            struct_bundle.extend(quote! {
+                #visibility #member_id: #ref_header B::#member_id,
+            });
+        } else {
+            struct_bundle.extend(quote! {
+                #visibility #member_id: #ref_header #member_id,
+            });
+        }
+    }
+
+    let info_macro = make_macro_exporter(
+        id.clone(),
+        CapProbeEntry::Bundle(CapProbeBundle {
+            members: SynArray::from_iter(members.iter().map(|(member_id, member)| {
+                CapProbeBundleMember {
+                    id: member_id.clone(),
+                    is_mutable: LitBool::new(member.is_mutable, Span::mixed_site()),
+                    is_trait: LitBool::new(member.is_trait, Span::mixed_site()),
+                    re_exported_as: member_id.clone(),
+                }
+            })),
+        }),
+    );
+
+    quote! {
+        #visibility mod #id {
+            #[allow(non_camel_case_types)]
+            #visibility trait TyBundle {
+                #ty_bundle
+            }
+
+            #visibility struct Bundle<'a, B: ?Sized + TyBundle> {
+                _ty: [&'a B; 0],
+                #struct_bundle
+            }
+
+            #import_block
+        }
+
+        #info_macro
+
+        #visibility use #id as #name;
+    }
+    .into()
 }

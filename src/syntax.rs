@@ -35,11 +35,11 @@ pub enum CapDeclInheritedElement {
 }
 
 impl CapDeclInheritedElement {
-    pub fn mode(&self) -> ResolvedBundleExpectedMode {
+    pub fn mode(&self) -> BundleElementMode {
         match self {
-            CapDeclInheritedElement::Ref(_) => ResolvedBundleExpectedMode::Ref(Nop),
-            CapDeclInheritedElement::Mut(_) => ResolvedBundleExpectedMode::Mut(Nop),
-            CapDeclInheritedElement::Bundle(_) => ResolvedBundleExpectedMode::Bundle(Nop),
+            CapDeclInheritedElement::Ref(_) => BundleElementMode::Ref(Nop),
+            CapDeclInheritedElement::Mut(_) => BundleElementMode::Mut(Nop),
+            CapDeclInheritedElement::Bundle(_) => BundleElementMode::Bundle(Nop),
         }
     }
 
@@ -121,38 +121,42 @@ impl Parse for CapDeclInheritedElement {
 // === CapProbe === //
 
 structured! {
+    // Supplied
     #[derive(Clone)]
-    pub struct CapProbeArgs {
+    pub struct CapProbeSupplied {
+        pub name: Ident,
+        pub visibility: Visibility,
         pub expected: SynArray<CapProbeArgReq>,
     }
 
     #[derive(Clone)]
     pub struct CapProbeArgReq {
         pub path: Path,
-        pub mode: ResolvedBundleExpectedMode,
+        pub mode: BundleElementMode,
     }
 
     #[derive(Clone)]
-    pub enum ResolvedBundleExpectedMode {
+    pub enum BundleElementMode {
         Ref(Nop),
         Mut(Nop),
         Bundle(Nop),
     }
 
+    // Collected
     #[derive(Clone)]
     pub enum CapProbeEntry {
-        ExactType(CapProbeDecl),
-        ImplsTrait(CapProbeDecl),
-        Bundle(CapProbeBundleResult),
+        Component(CapProbeComponent),
+        Bundle(CapProbeBundle),
     }
 
     #[derive(Clone)]
-    pub struct CapProbeDecl {
+    pub struct CapProbeComponent {
         pub id: Ident,
+        pub is_trait: LitBool,
     }
 
     #[derive(Clone)]
-    pub struct CapProbeBundleResult {
+    pub struct CapProbeBundle {
         pub members: SynArray<CapProbeBundleMember>,
     }
 
@@ -160,6 +164,7 @@ structured! {
     pub struct CapProbeBundleMember {
         pub id: Ident,
         pub is_mutable: LitBool,
+        pub is_trait: LitBool,
         pub re_exported_as: Ident,
     }
 }
