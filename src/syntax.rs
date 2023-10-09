@@ -1,8 +1,11 @@
+use proc_macro2::{Group, TokenTree};
 use quote::ToTokens;
 use syn::{
-    parse::{Parse, ParseStream},
+    braced,
+    parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
-    Expr, Ident, LitBool, Path, Token, Type, TypeParamBound, Visibility,
+    token::Brace,
+    Ident, LitBool, LitInt, Path, Token, Type, TypeParamBound, Visibility,
 };
 
 use crate::magic::{structured, Nop, SynArray};
@@ -173,14 +176,66 @@ structured! {
 // === CxMacroArg === //
 
 #[derive(Clone)]
-pub struct CxMacroArg {
-    pub expr: Expr, // FIXME: Limit to place expressions
+pub enum CxMacroArg {
+    Fetch(CxMacroArgFetch),
+    Construct(CxMacroArgConstruct),
+}
+
+impl Parse for CxMacroArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let place = input.parse::<PlaceExpr>()?;
+
+        match input.parse::<Token![=>]>() {
+            Ok(arr) => Ok(Self::Fetch(CxMacroArgFetch {
+                expr: place,
+                arr,
+                optional_mut: input.parse()?,
+                path: input.parse()?,
+            })),
+            Err(err) => {
+                let Some(path) = place.as_path() else {
+                    return Err(err);
+                };
+
+                let (brace, input) = match parse_brace(input) {
+                    Ok(inner) => inner,
+                    Err(_) => return Err(input.error("expected => or {")),
+                };
+
+                Ok(Self::Construct(CxMacroArgConstruct {
+                    path: path.clone(),
+                    brace,
+                    fields: Punctuated::parse_terminated(&input)?,
+                }))
+            }
+        }
+    }
+}
+
+impl ToTokens for CxMacroArg {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            CxMacroArg::Fetch(v) => v.to_tokens(tokens),
+            CxMacroArg::Construct(v) => v.to_tokens(tokens),
+        }
+    }
+}
+
+fn parse_brace(input: ParseStream) -> syn::Result<(Brace, ParseBuffer)> {
+    let stream;
+    Ok((braced!(stream in input), stream))
+}
+
+// Fetch
+#[derive(Clone)]
+pub struct CxMacroArgFetch {
+    pub expr: PlaceExpr,
     pub arr: Token![=>],
     pub optional_mut: Option<Token![mut]>,
     pub path: Path,
 }
 
-impl Parse for CxMacroArg {
+impl Parse for CxMacroArgFetch {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             expr: input.parse()?,
@@ -191,7 +246,7 @@ impl Parse for CxMacroArg {
     }
 }
 
-impl ToTokens for CxMacroArg {
+impl ToTokens for CxMacroArgFetch {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         self.expr.to_tokens(tokens);
         self.arr.to_tokens(tokens);
@@ -200,7 +255,123 @@ impl ToTokens for CxMacroArg {
     }
 }
 
+// Construct
+#[derive(Clone)]
+pub struct CxMacroArgConstruct {
+    pub path: Path,
+    pub brace: Brace,
+    pub fields: Punctuated<CxMacroArgConstructField, Token![,]>,
+}
+
+#[derive(Clone)]
+pub struct CxMacroArgConstructField {
+    pub path: Path,
+    pub equals: Token![=],
+    pub take_from: PlaceExpr,
+}
+
+impl Parse for CxMacroArgConstruct {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let braced;
+        Ok(Self {
+            path: input.parse()?,
+            brace: braced!(braced in input),
+            fields: Punctuated::parse_terminated(&braced)?,
+        })
+    }
+}
+
+impl ToTokens for CxMacroArgConstruct {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.path.to_tokens(tokens);
+        tokens.extend([TokenTree::Group(Group::new(
+            proc_macro2::Delimiter::Brace,
+            self.fields.to_token_stream(),
+        ))]);
+    }
+}
+
+impl Parse for CxMacroArgConstructField {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            path: input.parse()?,
+            equals: input.parse()?,
+            take_from: input.parse()?,
+        })
+    }
+}
+
+impl ToTokens for CxMacroArgConstructField {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.path.to_tokens(tokens);
+        self.equals.to_tokens(tokens);
+        self.take_from.to_tokens(tokens);
+    }
+}
+
+// Helpers
+#[derive(Clone)]
+pub struct PlaceExpr {
+    parts: Punctuated<PathOrInt, Token![.]>,
+}
+
+impl PlaceExpr {
+    pub fn as_path(&self) -> Option<&Path> {
+        if self.parts.len() != 1 {
+            return None;
+        }
+
+        let path = match &self.parts[0] {
+            PathOrInt::Path(path) => path,
+            PathOrInt::Int(_) => return None,
+        };
+
+        Some(path)
+    }
+}
+
+impl Parse for PlaceExpr {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            parts: Punctuated::parse_separated_nonempty(input)?,
+        })
+    }
+}
+
+impl ToTokens for PlaceExpr {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.parts.to_tokens(tokens);
+    }
+}
+
+#[derive(Clone)]
+pub enum PathOrInt {
+    Path(Path),
+    Int(LitInt),
+}
+
+impl Parse for PathOrInt {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if let Ok(ident) = input.parse::<Path>() {
+            Ok(Self::Path(ident))
+        } else if let Ok(lit) = input.parse::<LitInt>() {
+            Ok(Self::Int(lit))
+        } else {
+            Err(input.error("expected a path, an identifier, self, or a literal integer"))
+        }
+    }
+}
+
+impl ToTokens for PathOrInt {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            PathOrInt::Path(path) => path.to_tokens(tokens),
+            PathOrInt::Int(lit) => lit.to_tokens(tokens),
+        }
+    }
+}
+
 // === CxProbe === //
 
-pub type CxProbeSupplied = CxMacroArg;
-pub type CxProbeCollected = CapProbeEntry;
+pub type CxFetchProbeSupplied = CxMacroArgFetch;
+pub type CxFetchProbeCollected = CapProbeEntry;

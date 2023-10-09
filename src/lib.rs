@@ -5,8 +5,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{parse_macro_input, spanned::Spanned, Error, LitBool};
 use syntax::{
-    CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied, CxMacroArg,
-    CxProbeCollected, CxProbeSupplied,
+    CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied, CxFetchProbeCollected,
+    CxFetchProbeSupplied, CxMacroArg,
 };
 
 use crate::{
@@ -271,17 +271,25 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
 #[proc_macro]
 pub fn cx(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let inp = parse_macro_input!(inp as CxMacroArg);
-    let path = inp.path.to_token_stream();
 
-    let getter = make_macro_importer(inp, &[path, quote! { ::cap::__cx_process_bundle }]);
+    match inp {
+        CxMacroArg::Fetch(inp) => {
+            let path = inp.path.to_token_stream();
 
-    quote! {{ #getter }}.into()
+            let getter =
+                make_macro_importer(inp, &[path, quote! { ::cap::__cx_process_fetch_bundle }]);
+
+            quote! {{ #getter }}.into()
+        }
+        CxMacroArg::Construct(_) => todo!(),
+    }
 }
 
 #[proc_macro]
-pub fn __cx_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let inp =
-        parse_macro_input!(inp as magic::ImportedMacroInfo<CxProbeSupplied, CxProbeCollected>);
+pub fn __cx_process_fetch_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let inp = parse_macro_input!(
+        inp as magic::ImportedMacroInfo<CxFetchProbeSupplied, CxFetchProbeCollected>
+    );
 
     let expr = &inp.supplied.expr;
 
