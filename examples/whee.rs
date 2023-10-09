@@ -10,13 +10,13 @@ cap! {
     pub laz => maz, maz, mut baz, mut faz;
 }
 
-impl<B: ?Sized + maz::TyBundle> maz::Bundle<'_, B> {
+impl<B: maz::TyBundle> maz::Bundle<'_, B> {
     pub fn whee(&mut self) {
         dbg!(cx!(self => mut foo));
     }
 }
 
-impl<B: ?Sized + laz::TyBundle> laz::Bundle<'_, B> {
+impl<B: laz::TyBundle> laz::Bundle<'_, B> {
     pub fn whee(&mut self) {
         let faz = cx!(self => faz);
         let a = cx!(self => mut foo);

@@ -203,6 +203,9 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
     let id = new_unique_ident();
     let mut import_block = TokenStream::new();
     let mut ty_bundle = TokenStream::new();
+    let mut ty_bundle_impl_defs = TokenStream::new();
+    let mut ty_bundle_impl_paras = TokenStream::new();
+    let mut ty_bundle_ty_forwards = TokenStream::new();
     let mut struct_bundle = TokenStream::new();
 
     for (member_id, member) in &members {
@@ -219,8 +222,13 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
         };
 
         if member.is_trait {
+            let ty_id = new_unique_ident();
+            ty_bundle_impl_defs.extend(quote! { #ty_id: ?Sized + #member_id, });
+            ty_bundle_impl_paras.extend(quote! { ::core::marker::PhantomData<#ty_id>, });
+            ty_bundle_ty_forwards.extend(quote! { type #member_id = #ty_id; });
+
             ty_bundle.extend(quote! {
-                type #member_id: #member_id;
+                type #member_id: ?Sized + #member_id;
             });
             struct_bundle.extend(quote! {
                 #visibility #member_id: #ref_header B::#member_id,
@@ -247,10 +255,14 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
     );
 
     quote! {
+        #[allow(non_camel_case_types)]
         #visibility mod #id {
-            #[allow(non_camel_case_types)]
-            #visibility trait TyBundle {
+            #visibility trait TyBundle: ::core::marker::Sized {
                 #ty_bundle
+            }
+
+            impl<#ty_bundle_impl_defs> TyBundle for (#ty_bundle_impl_paras) {
+                #ty_bundle_ty_forwards
             }
 
             #visibility struct Bundle<'a, B: ?Sized + TyBundle> {
@@ -447,13 +459,12 @@ fn construct_bundle(
 ) -> TokenStream {
     let infer_bounds = info.members.iter().filter_map(|member| {
         member.is_trait.value.then(|| {
-            let id = &member.id;
-            quote! { #id = _ }
+            quote! { ::core::marker::PhantomData<_>, }
         })
     });
 
     quote! {
-        #base_path::Bundle::<dyn #base_path::TyBundle<#(#infer_bounds),*>> {
+        #base_path::Bundle::<(#(#infer_bounds)*)> {
             _ty: [],
             #(#body),*
         }
