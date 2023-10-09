@@ -3,10 +3,10 @@ use std::collections::{hash_map::Entry, HashMap};
 use magic::{make_macro_exporter, make_macro_importer, new_unique_ident};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{parse_macro_input, spanned::Spanned, Error, LitBool};
+use syn::{parse_macro_input, spanned::Spanned, Error, LitBool, Path};
 use syntax::{
-    CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied, CxFetchProbeCollected,
-    CxFetchProbeSupplied, CxMacroArg,
+    CapProbeArgReq, CapProbeComponent, CapProbeEntry, CapProbeSupplied, CxConstructProbeInfo,
+    CxFetchProbeInfo, CxMacroArg,
 };
 
 use crate::{
@@ -281,15 +281,30 @@ pub fn cx(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
             quote! {{ #getter }}.into()
         }
-        CxMacroArg::Construct(_) => todo!(),
+        CxMacroArg::Construct(inp) => {
+            let mut paths = Vec::new();
+            {
+                // Constructor target
+                paths.push(inp.path.to_token_stream());
+
+                // Fields
+                for field in &inp.fields {
+                    paths.push(field.path.to_token_stream());
+                }
+
+                // Target
+                paths.push(quote! { ::cap::__cx_process_construct_bundle });
+            }
+
+            let getter = make_macro_importer(inp, &paths);
+            quote! {{ #getter }}.into()
+        }
     }
 }
 
 #[proc_macro]
 pub fn __cx_process_fetch_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let inp = parse_macro_input!(
-        inp as magic::ImportedMacroInfo<CxFetchProbeSupplied, CxFetchProbeCollected>
-    );
+    let inp = parse_macro_input!(inp as CxFetchProbeInfo);
 
     let expr = &inp.supplied.expr;
 
@@ -300,7 +315,6 @@ pub fn __cx_process_fetch_bundle(inp: proc_macro::TokenStream) -> proc_macro::To
             quote! { #prefix #expr.#id }
         }
         CapProbeEntry::Bundle(info) => {
-            let base_path = inp.supplied.path;
             let field_getters = info.members.iter().map(|member| {
                 let prefix = get_reborrow_prefix(member.is_mutable.value);
                 let id = &member.id;
@@ -308,22 +322,114 @@ pub fn __cx_process_fetch_bundle(inp: proc_macro::TokenStream) -> proc_macro::To
                 quote! { #id: #prefix #expr.#id }
             });
 
-            let infer_bounds = info.members.iter().filter_map(|member| {
-                member.is_trait.value.then(|| {
-                    let id = &member.id;
-                    quote! { #id = _ }
-                })
-            });
+            construct_bundle(&inp.supplied.path, info, field_getters)
+        }
+    }
+    .into()
+}
 
-            quote! {
-                #base_path::Bundle::<dyn #base_path::TyBundle<#(#infer_bounds),*>> {
-                    _ty: [],
-                    #(#field_getters),*
+#[proc_macro]
+pub fn __cx_process_construct_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let inp = parse_macro_input!(inp as CxConstructProbeInfo);
+
+    // Extract requested bundle info
+    let target_info = match &inp.collected[0] {
+        CapProbeEntry::Component(_) => {
+            return Error::new(
+                inp.supplied.path.span(),
+                "expected a path to the bundle to be constructed; found a component",
+            )
+            .to_compile_error()
+            .into();
+        }
+        CapProbeEntry::Bundle(bundle) => bundle,
+    };
+
+    // Determine where we'll get the data from
+    #[derive(Debug)]
+    enum FieldEntry {
+        Missing,
+        Present(TokenStream, Span),
+        Doubled(Vec<Span>),
+    }
+
+    let mut fetch_map = target_info
+        .members
+        .iter()
+        .map(|v| (v.id.clone(), (v.is_mutable.value, FieldEntry::Missing)))
+        .collect::<HashMap<_, _>>();
+
+    for (field_info, field_req) in inp.collected[1..].iter().zip(&inp.supplied.fields) {
+        match field_info {
+            CapProbeEntry::Component(field_info) => {
+                let Some((_, req)) = fetch_map.get_mut(&field_info.id) else {
+                    continue;
+                };
+
+                match req {
+                    FieldEntry::Missing => {
+                        *req = FieldEntry::Present(
+                            field_req.take_from.to_token_stream(),
+                            field_req.path.span(),
+                        );
+                    }
+                    FieldEntry::Present(_from, span) => {
+                        *req = FieldEntry::Doubled(vec![*span, field_req.path.span()]);
+                    }
+                    FieldEntry::Doubled(overlaps) => overlaps.push(field_req.span()),
+                }
+            }
+            CapProbeEntry::Bundle(field_info) => {
+                for field_info in &*field_info.members {
+                    let Some((is_mutable, req)) = fetch_map.get_mut(&field_info.id) else {
+                        continue;
+                    };
+
+                    match req {
+                        FieldEntry::Missing => {
+                            let prefix = get_reborrow_prefix(*is_mutable);
+                            let place = &field_req.take_from; // TODO: Ensure that this is, indeed, a place.
+                            let id = &field_info.id;
+
+                            *req = FieldEntry::Present(
+                                quote! { #prefix #place.#id },
+                                field_req.path.span(),
+                            );
+                        }
+                        FieldEntry::Present(_from, span) => {
+                            *req = FieldEntry::Doubled(vec![*span, field_req.path.span()]);
+                        }
+                        FieldEntry::Doubled(overlaps) => overlaps.push(field_req.span()),
+                    }
                 }
             }
         }
     }
-    .into()
+
+    // Construct the structure
+    let mut errors = TokenStream::new();
+    let mut fields = Vec::new();
+
+    for (id, (_, entry)) in &fetch_map {
+        // TODO: Improve diagnostics
+        match entry {
+            FieldEntry::Missing => errors.extend(
+                Error::new(inp.supplied.fields.span(), "missing field").into_compile_error(),
+            ),
+            FieldEntry::Present(getter, _) => fields.push(quote! { #id: #getter }),
+            FieldEntry::Doubled(spans) => {
+                for &span in spans {
+                    errors.extend(Error::new(span, "field source ambiguity").into_compile_error())
+                }
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        return errors.into();
+    }
+
+    construct_bundle(&inp.supplied.path, target_info, fields.into_iter()).into()
 }
 
 fn get_reborrow_prefix(mutable: bool) -> proc_macro2::TokenStream {
@@ -331,5 +437,25 @@ fn get_reborrow_prefix(mutable: bool) -> proc_macro2::TokenStream {
         quote! { &mut * }
     } else {
         quote! { &* }
+    }
+}
+
+fn construct_bundle(
+    base_path: &Path,
+    info: &CapProbeBundle,
+    body: impl Iterator<Item = TokenStream>,
+) -> TokenStream {
+    let infer_bounds = info.members.iter().filter_map(|member| {
+        member.is_trait.value.then(|| {
+            let id = &member.id;
+            quote! { #id = _ }
+        })
+    });
+
+    quote! {
+        #base_path::Bundle::<dyn #base_path::TyBundle<#(#infer_bounds),*>> {
+            _ty: [],
+            #(#body),*
+        }
     }
 }

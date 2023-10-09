@@ -5,10 +5,10 @@ use syn::{
     parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
     token::Brace,
-    Ident, LitBool, LitInt, Path, Token, Type, TypeParamBound, Visibility,
+    Expr, Ident, LitBool, LitInt, Path, Token, Type, TypeParamBound, Visibility,
 };
 
-use crate::magic::{structured, Nop, SynArray};
+use crate::magic::{structured, ImportedMacroInfo, Nop, SynArray};
 
 // === CapMacroArg === //
 
@@ -267,7 +267,7 @@ pub struct CxMacroArgConstruct {
 pub struct CxMacroArgConstructField {
     pub path: Path,
     pub equals: Token![=],
-    pub take_from: PlaceExpr,
+    pub take_from: Expr,
 }
 
 impl Parse for CxMacroArgConstruct {
@@ -373,5 +373,12 @@ impl ToTokens for PathOrInt {
 
 // === CxProbe === //
 
+pub type CxFetchProbeInfo = ImportedMacroInfo<CxFetchProbeSupplied, CxFetchProbeCollected>;
 pub type CxFetchProbeSupplied = CxMacroArgFetch;
 pub type CxFetchProbeCollected = CapProbeEntry;
+
+pub type CxConstructProbeInfo =
+    ImportedMacroInfo<CxConstructProbeSupplied, CxConstructProbeCollected>;
+
+pub type CxConstructProbeSupplied = CxMacroArgConstruct;
+pub type CxConstructProbeCollected = CapProbeEntry;
