@@ -265,6 +265,7 @@ pub struct CxMacroArgConstruct {
 
 #[derive(Clone)]
 pub struct CxMacroArgConstructField {
+    pub spread: Option<Token![...]>,
     pub path: Path,
     pub equals: Token![=],
     pub take_from: Expr,
@@ -294,6 +295,7 @@ impl ToTokens for CxMacroArgConstruct {
 impl Parse for CxMacroArgConstructField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
+            spread: input.parse()?,
             path: input.parse()?,
             equals: input.parse()?,
             take_from: input.parse()?,
@@ -303,6 +305,7 @@ impl Parse for CxMacroArgConstructField {
 
 impl ToTokens for CxMacroArgConstructField {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.spread.to_tokens(tokens);
         self.path.to_tokens(tokens);
         self.equals.to_tokens(tokens);
         self.take_from.to_tokens(tokens);

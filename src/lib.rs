@@ -371,9 +371,17 @@ pub fn __cx_process_construct_bundle(inp: proc_macro::TokenStream) -> proc_macro
         .map(|v| (v.id.clone(), (v.is_mutable.value, FieldEntry::Missing)))
         .collect::<HashMap<_, _>>();
 
+    let mut errors = TokenStream::new();
+
     for (field_info, field_req) in inp.collected[1..].iter().zip(&inp.supplied.fields) {
         match field_info {
             CapProbeEntry::Component(field_info) => {
+                if let Some(spread) = field_req.spread {
+                    errors.extend(
+                        Error::new(spread.span(), "cannot spread a component").into_compile_error(),
+                    );
+                }
+
                 let Some((_, req)) = fetch_map.get_mut(&field_info.id) else {
                     continue;
                 };
@@ -392,26 +400,42 @@ pub fn __cx_process_construct_bundle(inp: proc_macro::TokenStream) -> proc_macro
                 }
             }
             CapProbeEntry::Bundle(field_info) => {
-                for field_info in &*field_info.members {
-                    let Some((is_mutable, req)) = fetch_map.get_mut(&field_info.id) else {
-                        continue;
-                    };
+                if field_req.spread.is_some() {
+                    for field_info in &*field_info.members {
+                        let Some((_, req)) = fetch_map.get_mut(&field_info.id) else {
+                            continue;
+                        };
 
-                    match req {
-                        FieldEntry::Missing => {
-                            let prefix = get_reborrow_prefix(*is_mutable);
-                            let place = &field_req.take_from; // TODO: Ensure that this is, indeed, a place.
-                            let id = &field_info.id;
-
+                        if let FieldEntry::Missing = req {
                             *req = FieldEntry::Present(
-                                quote! { #prefix #place.#id },
+                                // TODO: Give this more context.
+                                field_req.take_from.to_token_stream(),
                                 field_req.path.span(),
                             );
                         }
-                        FieldEntry::Present(_from, span) => {
-                            *req = FieldEntry::Doubled(vec![*span, field_req.path.span()]);
+                    }
+                } else {
+                    for field_info in &*field_info.members {
+                        let Some((is_mutable, req)) = fetch_map.get_mut(&field_info.id) else {
+                            continue;
+                        };
+
+                        match req {
+                            FieldEntry::Missing => {
+                                let prefix = get_reborrow_prefix(*is_mutable);
+                                let place = &field_req.take_from; // TODO: Ensure that this is, indeed, a place.
+                                let id = &field_info.id;
+
+                                *req = FieldEntry::Present(
+                                    quote! { #prefix #place.#id },
+                                    field_req.path.span(),
+                                );
+                            }
+                            FieldEntry::Present(_from, span) => {
+                                *req = FieldEntry::Doubled(vec![*span, field_req.path.span()]);
+                            }
+                            FieldEntry::Doubled(overlaps) => overlaps.push(field_req.span()),
                         }
-                        FieldEntry::Doubled(overlaps) => overlaps.push(field_req.span()),
                     }
                 }
             }
@@ -419,7 +443,6 @@ pub fn __cx_process_construct_bundle(inp: proc_macro::TokenStream) -> proc_macro
     }
 
     // Construct the structure
-    let mut errors = TokenStream::new();
     let mut fields = Vec::new();
 
     for (id, (_, entry)) in &fetch_map {
