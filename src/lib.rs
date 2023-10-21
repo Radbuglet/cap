@@ -43,6 +43,7 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 out.extend(quote! {
                     #export
 
+                    #[doc(hidden)]
                     #visibility mod #id {
                         #[allow(unused_imports)]
                         use super::*;
@@ -66,6 +67,7 @@ pub fn cap(inp: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 out.extend(quote! {
                     #export
 
+                    #[doc(hidden)]
                     #visibility mod #id {
                         #[allow(unused_imports)]
                         use super::*;
@@ -154,7 +156,7 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
                         entry.insert(MemberInfo {
                             is_mutable: mutability,
                             is_trait: ty.is_trait.value,
-                            fetch_from: quote! { #macro_path::CompTy },
+                            fetch_from: quote! { #macro_path },
                         });
                     }
                     Entry::Occupied(entry) => {
@@ -223,19 +225,19 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
 
         if member.is_trait {
             let ty_id = new_unique_ident();
-            ty_bundle_impl_defs.extend(quote! { #ty_id: ?Sized + #member_id, });
+            ty_bundle_impl_defs.extend(quote! { #ty_id: ?Sized + #member_id::CompTy, });
             ty_bundle_impl_paras.extend(quote! { ::core::marker::PhantomData<#ty_id>, });
             ty_bundle_ty_forwards.extend(quote! { type #member_id = #ty_id; });
 
             ty_bundle.extend(quote! {
-                type #member_id: ?Sized + #member_id;
+                type #member_id: ?Sized + #member_id::CompTy;
             });
             struct_bundle.extend(quote! {
                 #visibility #member_id: #ref_header B::#member_id,
             });
         } else {
             struct_bundle.extend(quote! {
-                #visibility #member_id: #ref_header #member_id,
+                #visibility #member_id: #ref_header #member_id::CompTy,
             });
         }
     }
@@ -256,6 +258,7 @@ pub fn __cap_process_bundle(inp: proc_macro::TokenStream) -> proc_macro::TokenSt
 
     quote! {
         #[allow(non_camel_case_types)]
+        #[doc(hidden)]
         #visibility mod #id {
             #visibility trait TyBundle: ::core::marker::Sized {
                 #ty_bundle
@@ -407,9 +410,15 @@ pub fn __cx_process_construct_bundle(inp: proc_macro::TokenStream) -> proc_macro
                         };
 
                         if let FieldEntry::Missing = req {
+                            let get_path = &field_req.path;
+                            let get_reexport = &field_info.re_exported_as;
+                            let value_getter = &field_req.take_from;
+
                             *req = FieldEntry::Present(
-                                // TODO: Give this more context.
-                                field_req.take_from.to_token_stream(),
+                                quote! {{
+                                    use #get_path::#get_reexport as TARGET;
+                                    #value_getter
+                                }},
                                 field_req.path.span(),
                             );
                         }
