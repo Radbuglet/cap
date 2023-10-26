@@ -9,8 +9,8 @@ mod syntax;
 mod util;
 
 use crate::syntax::{
-    CapComponentDef, CapDecl, CapDef, CapMacroArg,
-    {CapBundleDef, CapBundleMemberDef, CapDeclBundleElement, CxMacroArg},
+    CapDecl, CapMacroArg, ComponentDef, ItemDef,
+    {BundleDef, BundleMemberDef, CapDeclBundleElement, CxMacroArg},
 };
 use crate::util::SynArray;
 
@@ -32,7 +32,9 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let me = &quote! { ::cap::__ra_cap_single_hack };
 
     begin_import(me, input, |input| {
-        let CapDecl { vis, name, kind } = &match syn::parse2::<CapDecl>(input) {
+        let CapDecl {
+            vis, name, kind, ..
+        } = &match syn::parse2::<CapDecl>(input) {
             Ok(input) => input,
             Err(err) => return err.into_compile_error(),
         };
@@ -45,7 +47,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let (mod_id, exporter) = export(
                     vis,
                     name,
-                    CapDef::Component(CapComponentDef {
+                    ItemDef::Component(ComponentDef {
                         id,
                         name: name.clone(),
                         is_trait: LitBool::new(false, Span::call_site()),
@@ -68,7 +70,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let (mod_id, exporter) = export(
                     vis,
                     name,
-                    CapDef::Component(CapComponentDef {
+                    ItemDef::Component(ComponentDef {
                         id,
                         name: name.clone(),
                         is_trait: LitBool::new(true, Span::call_site()),
@@ -102,7 +104,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let mut has_errors = false;
                 let members = members
                     .into_iter()
-                    .filter_map(|(member, def)| match syn::parse2::<CapDef>(def.eval()) {
+                    .filter_map(|(member, def)| match syn::parse2::<ItemDef>(def.eval()) {
                         Ok(def) => Some((member, def)),
                         Err(_) => {
                             output.extend(
@@ -126,7 +128,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 for (member, def) in members {
                     match member {
                         CapDeclBundleElement::Component(mutability, path) => {
-                            let CapDef::Component(def) = def else {
+                            let ItemDef::Component(def) = def else {
                                 output.extend(
                                     Error::new(
                                         path.span(),
@@ -147,7 +149,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                         #vis use #path::CompTy as #re_exported_as;
                                     });
 
-                                    CapBundleMemberDef {
+                                    BundleMemberDef {
                                         id: def.id.clone(),
                                         name: def.name.clone(),
                                         is_mutable: LitBool::new(
@@ -162,7 +164,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 .value |= mutability.is_mutable();
                         }
                         CapDeclBundleElement::Bundle(path) => {
-                            let CapDef::Bundle(def) = def else {
+                            let ItemDef::Bundle(def) = def else {
                                 output.extend(
                                     Error::new(
                                         path.span(),
@@ -185,7 +187,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 											quote! { #vis use #path::#its_reexport as #re_exported_as; },
 										);
 
-                                        CapBundleMemberDef {
+                                        BundleMemberDef {
                                             id: def.id.clone(),
                                             name: def.name.clone(),
                                             is_mutable: def.is_mutable.clone(),
@@ -251,7 +253,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let (mod_id, exporter) = export(
                     vis,
                     name,
-                    CapDef::Bundle(CapBundleDef {
+                    ItemDef::Bundle(BundleDef {
                         members: SynArray::from_iter(fields.into_values()),
                     }),
                 );
@@ -302,7 +304,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             CxMacroArg::Fetch(input) => {
                 let path = &input.path;
                 let target = &input.expr;
-                let info = match syn::parse2::<CapDef>(import(path).eval()) {
+                let info = match syn::parse2::<ItemDef>(import(path).eval()) {
                     Ok(info) => info,
                     Err(_) => {
                         return Error::new(path.span(), "expected a cap item").into_compile_error();
@@ -310,13 +312,13 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 };
 
                 match info {
-                    CapDef::Component(info) => {
+                    ItemDef::Component(info) => {
                         let prefix = get_reborrow_prefix(input.optional_mut.is_some());
                         let id = &info.id;
 
                         quote! { #prefix #target.#id }
                     }
-                    CapDef::Bundle(info) => {
+                    ItemDef::Bundle(info) => {
                         if input.optional_mut.is_some() {
                             return Error::new(
                                 input.optional_mut.span(),
@@ -349,7 +351,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 // Evaluate and parse them
                 let mut errors = TokenStream::new();
 
-                let info = match syn::parse2::<CapDef>(info.eval()) {
+                let info = match syn::parse2::<ItemDef>(info.eval()) {
                     Ok(info) => info,
                     Err(_) => {
                         return Error::new(input.path.span(), "expected a cap item")
@@ -359,7 +361,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 let fields = fields
                     .into_iter()
-                    .filter_map(|(field, info)| match syn::parse2::<CapDef>(info.eval()) {
+                    .filter_map(|(field, info)| match syn::parse2::<ItemDef>(info.eval()) {
                         Ok(info) => Some((field, info)),
                         Err(_) => {
                             errors.extend(
@@ -377,8 +379,8 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 // Enure that info is a bundle
                 let info = match info {
-                    CapDef::Bundle(info) => info,
-                    CapDef::Component(_) => {
+                    ItemDef::Bundle(info) => info,
+                    ItemDef::Component(_) => {
                         return Error::new(input.path.span(), "expected bundle, found component")
                             .to_compile_error()
                     }
@@ -405,7 +407,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 for (field_req, field_info) in &fields {
                     match field_info {
-                        CapDef::Component(field_info) => {
+                        ItemDef::Component(field_info) => {
                             if let Some(spread) = field_req.spread {
                                 errors.extend(
                                     Error::new(spread.span(), "cannot spread a component")
@@ -430,7 +432,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 FieldEntry::Doubled(overlaps) => overlaps.push(field_req.span()),
                             }
                         }
-                        CapDef::Bundle(field_info) => {
+                        ItemDef::Bundle(field_info) => {
                             if field_req.spread.is_some() {
                                 for field_info in &*field_info.members {
                                     let Some((_, _, req)) = fetch_map.get_mut(&field_info.id)
@@ -538,7 +540,7 @@ pub fn __ra_cx_hack(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 fn construct_bundle(
     base_path: &Path,
-    info: &CapBundleDef,
+    info: &BundleDef,
     body: impl Iterator<Item = TokenStream>,
 ) -> TokenStream {
     let infer_bounds = info.members.iter().filter_map(|member| {

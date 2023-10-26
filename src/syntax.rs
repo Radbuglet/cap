@@ -10,29 +10,29 @@ use syn::{
 
 use crate::util::{structured, SynArray};
 
-// === CapDef === //
+// === ItemDef === //
 
 structured! {
     #[derive(Clone)]
-    pub enum CapDef {
-        Component(CapComponentDef),
-        Bundle(CapBundleDef),
+    pub enum ItemDef {
+        Component(ComponentDef),
+        Bundle(BundleDef),
     }
 
     #[derive(Clone)]
-    pub struct CapComponentDef {
+    pub struct ComponentDef {
         pub id: Ident,
         pub name: Ident,
         pub is_trait: LitBool,
     }
 
     #[derive(Clone)]
-    pub struct CapBundleDef {
-        pub members: SynArray<CapBundleMemberDef>,
+    pub struct BundleDef {
+        pub members: SynArray<BundleMemberDef>,
     }
 
     #[derive(Clone)]
-    pub struct CapBundleMemberDef {
+    pub struct BundleMemberDef {
         pub id: Ident,
         pub name: Ident,
         pub is_mutable: LitBool,
@@ -52,7 +52,13 @@ pub struct CapMacroArg {
 pub struct CapDecl {
     pub vis: Visibility,
     pub name: Ident,
+    pub generics: CapDeclGenerics,
     pub kind: CapDeclKind,
+}
+
+#[derive(Clone)]
+pub struct CapDeclGenerics {
+    pub params: Option<(Token![<], Punctuated<Ident, Token![,]>, Token![>])>,
 }
 
 #[derive(Clone)]
@@ -93,6 +99,7 @@ impl Parse for CapDecl {
         Ok(Self {
             vis: input.parse()?,
             name: input.parse()?,
+            generics: input.parse()?,
             kind: input.parse()?,
         })
     }
@@ -102,7 +109,34 @@ impl ToTokens for CapDecl {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         self.vis.to_tokens(tokens);
         self.name.to_tokens(tokens);
+        self.generics.to_tokens(tokens);
         self.kind.to_tokens(tokens);
+    }
+}
+
+impl Parse for CapDeclGenerics {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if let Ok(open) = input.parse::<Token![<]>() {
+            Ok(Self {
+                params: Some((
+                    open,
+                    Punctuated::parse_separated_nonempty(input)?,
+                    input.parse::<Token![>]>()?,
+                )),
+            })
+        } else {
+            Ok(Self { params: None })
+        }
+    }
+}
+
+impl ToTokens for CapDeclGenerics {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        if let Some((open, list, close)) = &self.params {
+            open.to_tokens(tokens);
+            list.to_tokens(tokens);
+            close.to_tokens(tokens);
+        }
     }
 }
 
@@ -202,6 +236,20 @@ impl ToTokens for CapDeclBundleElementMut {
             CapDeclBundleElementMut::Ref(kw) => kw.to_tokens(tokens),
             CapDeclBundleElementMut::Mut(kw) => kw.to_tokens(tokens),
         }
+    }
+}
+
+impl CapDeclGenerics {
+    pub fn is_empty(&self) -> bool {
+        match &self.params {
+            Some((_, v, _)) if v.is_empty() => true,
+            None => true,
+            _ => false,
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Ident> + '_ {
+        self.params.iter().flat_map(|(_, v, _)| v.iter())
     }
 }
 
