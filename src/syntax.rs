@@ -22,6 +22,7 @@ structured! {
     #[derive(Clone)]
     pub struct CapComponentDef {
         pub id: Ident,
+        pub name: Ident,
         pub is_trait: LitBool,
     }
 
@@ -33,6 +34,7 @@ structured! {
     #[derive(Clone)]
     pub struct CapBundleMemberDef {
         pub id: Ident,
+        pub name: Ident,
         pub is_mutable: LitBool,
         pub is_trait: LitBool,
         pub re_exported_as: Ident,
