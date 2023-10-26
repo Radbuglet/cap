@@ -1,4 +1,4 @@
-use proc_macro2::{Group, TokenTree};
+use proc_macro2::{Group, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::{
     braced,
@@ -8,7 +8,36 @@ use syn::{
     Expr, Ident, LitBool, LitInt, Path, Token, Type, TypeParamBound, Visibility,
 };
 
-use crate::magic::{structured, ImportedMacroInfo, Nop, SynArray};
+use crate::util::{structured, SynArray};
+
+// === CapDef === //
+
+structured! {
+    #[derive(Clone)]
+    pub enum CapDef {
+        Component(CapComponentDef),
+        Bundle(CapBundleDef),
+    }
+
+    #[derive(Clone)]
+    pub struct CapComponentDef {
+        pub id: Ident,
+        pub is_trait: LitBool,
+    }
+
+    #[derive(Clone)]
+    pub struct CapBundleDef {
+        pub members: SynArray<CapBundleMemberDef>,
+    }
+
+    #[derive(Clone)]
+    pub struct CapBundleMemberDef {
+        pub id: Ident,
+        pub is_mutable: LitBool,
+        pub is_trait: LitBool,
+        pub re_exported_as: Ident,
+    }
+}
 
 // === CapMacroArg === //
 
@@ -19,41 +48,28 @@ pub struct CapMacroArg {
 
 #[derive(Clone)]
 pub struct CapDecl {
-    pub visibility: Visibility,
+    pub vis: Visibility,
     pub name: Ident,
     pub kind: CapDeclKind,
 }
 
 #[derive(Clone)]
 pub enum CapDeclKind {
-    EqualsTy(Type),
-    ImplsTrait(Punctuated<TypeParamBound, Token![+]>),
-    Inherits(Punctuated<CapDeclInheritedElement, Token![,]>),
+    CompTy(Token![=], Type),
+    CompTrait(Token![:], Punctuated<TypeParamBound, Token![+]>),
+    Bundle(Token![=>], Punctuated<CapDeclBundleElement, Token![,]>),
 }
 
 #[derive(Clone)]
-pub enum CapDeclInheritedElement {
-    Ref(Path),
-    Mut(Path),
+pub enum CapDeclBundleElement {
+    Component(CapDeclBundleElementMut, Path),
     Bundle(Path),
 }
 
-impl CapDeclInheritedElement {
-    pub fn mode(&self) -> BundleElementMode {
-        match self {
-            CapDeclInheritedElement::Ref(_) => BundleElementMode::Ref(Nop),
-            CapDeclInheritedElement::Mut(_) => BundleElementMode::Mut(Nop),
-            CapDeclInheritedElement::Bundle(_) => BundleElementMode::Bundle(Nop),
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        use CapDeclInheritedElement::*;
-
-        match self {
-            Ref(p) | Mut(p) | Bundle(p) => p,
-        }
-    }
+#[derive(Clone)]
+pub enum CapDeclBundleElementMut {
+    Ref(Token![ref]),
+    Mut(Token![mut]),
 }
 
 impl Parse for CapMacroArg {
@@ -64,24 +80,41 @@ impl Parse for CapMacroArg {
     }
 }
 
+impl ToTokens for CapMacroArg {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.list.to_tokens(tokens);
+    }
+}
+
 impl Parse for CapDecl {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
-            visibility: input.parse()?,
+            vis: input.parse()?,
             name: input.parse()?,
             kind: input.parse()?,
         })
     }
 }
 
+impl ToTokens for CapDecl {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.vis.to_tokens(tokens);
+        self.name.to_tokens(tokens);
+        self.kind.to_tokens(tokens);
+    }
+}
+
 impl Parse for CapDeclKind {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.parse::<Token![=>]>().is_ok() {
-            Ok(Self::Inherits(Punctuated::parse_separated_nonempty(input)?))
-        } else if input.parse::<Token![=]>().is_ok() {
-            Ok(Self::EqualsTy(input.parse()?))
-        } else if input.parse::<Token![:]>().is_ok() {
-            Ok(Self::ImplsTrait({
+        if let Ok(sep) = input.parse::<Token![=>]>() {
+            Ok(Self::Bundle(
+                sep,
+                Punctuated::parse_separated_nonempty(input)?,
+            ))
+        } else if let Ok(sep) = input.parse::<Token![=]>() {
+            Ok(Self::CompTy(sep, input.parse()?))
+        } else if let Ok(sep) = input.parse::<Token![:]>() {
+            Ok(Self::CompTrait(sep, {
                 // Copied from `WherePredicate`'s parsing logic
                 let mut bounds = Punctuated::new();
                 loop {
@@ -110,66 +143,69 @@ impl Parse for CapDeclKind {
     }
 }
 
-impl Parse for CapDeclInheritedElement {
+impl ToTokens for CapDeclKind {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            CapDeclKind::CompTy(sep, v) => {
+                sep.to_tokens(tokens);
+                v.to_tokens(tokens);
+            }
+            CapDeclKind::CompTrait(sep, v) => {
+                sep.to_tokens(tokens);
+                v.to_tokens(tokens);
+            }
+            CapDeclKind::Bundle(sep, v) => {
+                sep.to_tokens(tokens);
+                v.to_tokens(tokens);
+            }
+        }
+    }
+}
+
+impl Parse for CapDeclBundleElement {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.parse::<Token![ref]>().is_ok() {
-            Ok(Self::Ref(input.parse()?))
-        } else if input.parse::<Token![mut]>().is_ok() {
-            Ok(Self::Mut(input.parse()?))
+        if let Ok(kw) = input.parse::<Token![ref]>() {
+            Ok(Self::Component(
+                CapDeclBundleElementMut::Ref(kw),
+                input.parse()?,
+            ))
+        } else if let Ok(kw) = input.parse::<Token![mut]>() {
+            Ok(Self::Component(
+                CapDeclBundleElementMut::Mut(kw),
+                input.parse()?,
+            ))
         } else {
             Ok(Self::Bundle(input.parse()?))
         }
     }
 }
 
-// === CapProbe === //
-
-structured! {
-    // Supplied
-    #[derive(Clone)]
-    pub struct CapProbeSupplied {
-        pub name: Ident,
-        pub visibility: Visibility,
-        pub expected: SynArray<CapProbeArgReq>,
+impl ToTokens for CapDeclBundleElement {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            CapDeclBundleElement::Component(kw, path) => {
+                kw.to_tokens(tokens);
+                path.to_tokens(tokens);
+            }
+            CapDeclBundleElement::Bundle(path) => {
+                path.to_tokens(tokens);
+            }
+        }
     }
+}
 
-    #[derive(Clone)]
-    pub struct CapProbeArgReq {
-        pub path: Path,
-        pub mode: BundleElementMode,
+impl ToTokens for CapDeclBundleElementMut {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            CapDeclBundleElementMut::Ref(kw) => kw.to_tokens(tokens),
+            CapDeclBundleElementMut::Mut(kw) => kw.to_tokens(tokens),
+        }
     }
+}
 
-    #[derive(Clone)]
-    pub enum BundleElementMode {
-        Ref(Nop),
-        Mut(Nop),
-        Bundle(Nop),
-    }
-
-    // Collected
-    #[derive(Clone)]
-    pub enum CapProbeEntry {
-        Component(CapProbeComponent),
-        Bundle(CapProbeBundle),
-    }
-
-    #[derive(Clone)]
-    pub struct CapProbeComponent {
-        pub id: Ident,
-        pub is_trait: LitBool,
-    }
-
-    #[derive(Clone)]
-    pub struct CapProbeBundle {
-        pub members: SynArray<CapProbeBundleMember>,
-    }
-
-    #[derive(Clone)]
-    pub struct CapProbeBundleMember {
-        pub id: Ident,
-        pub is_mutable: LitBool,
-        pub is_trait: LitBool,
-        pub re_exported_as: Ident,
+impl CapDeclBundleElementMut {
+    pub fn is_mutable(&self) -> bool {
+        matches!(self, CapDeclBundleElementMut::Mut(_))
     }
 }
 
@@ -213,7 +249,7 @@ impl Parse for CxMacroArg {
 }
 
 impl ToTokens for CxMacroArg {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             CxMacroArg::Fetch(v) => v.to_tokens(tokens),
             CxMacroArg::Construct(v) => v.to_tokens(tokens),
@@ -247,7 +283,7 @@ impl Parse for CxMacroArgFetch {
 }
 
 impl ToTokens for CxMacroArgFetch {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         self.expr.to_tokens(tokens);
         self.arr.to_tokens(tokens);
         self.optional_mut.to_tokens(tokens);
@@ -283,7 +319,7 @@ impl Parse for CxMacroArgConstruct {
 }
 
 impl ToTokens for CxMacroArgConstruct {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         self.path.to_tokens(tokens);
         tokens.extend([TokenTree::Group(Group::new(
             proc_macro2::Delimiter::Brace,
@@ -304,7 +340,7 @@ impl Parse for CxMacroArgConstructField {
 }
 
 impl ToTokens for CxMacroArgConstructField {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         self.spread.to_tokens(tokens);
         self.path.to_tokens(tokens);
         self.equals.to_tokens(tokens);
@@ -342,7 +378,7 @@ impl Parse for PlaceExpr {
 }
 
 impl ToTokens for PlaceExpr {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         self.parts.to_tokens(tokens);
     }
 }
@@ -366,22 +402,10 @@ impl Parse for PathOrInt {
 }
 
 impl ToTokens for PathOrInt {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             PathOrInt::Path(path) => path.to_tokens(tokens),
             PathOrInt::Int(lit) => lit.to_tokens(tokens),
         }
     }
 }
-
-// === CxProbe === //
-
-pub type CxFetchProbeInfo = ImportedMacroInfo<CxFetchProbeSupplied, CxFetchProbeCollected>;
-pub type CxFetchProbeSupplied = CxMacroArgFetch;
-pub type CxFetchProbeCollected = CapProbeEntry;
-
-pub type CxConstructProbeInfo =
-    ImportedMacroInfo<CxConstructProbeSupplied, CxConstructProbeCollected>;
-
-pub type CxConstructProbeSupplied = CxMacroArgConstruct;
-pub type CxConstructProbeCollected = CapProbeEntry;

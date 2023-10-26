@@ -12,21 +12,23 @@ cap! {
 
 impl<B: maz::TyBundle> maz::Bundle<'_, B> {
     pub fn whee(&mut self) {
-        dbg!(cx!(self => mut foo));
+        // let foo = cx!(self => mut foo);
+        // dbg!();
     }
 }
 
-impl<B: laz::TyBundle> laz::Bundle<'_, B> {
-    pub fn whee(&mut self) {
-        let faz = cx!(self => faz);
-        let a = cx!(self => mut foo);
-        let b = cx!(self => bar).abs();
-
-        *a += b as u32;
-
-        cx!(self => maz).whee();
-        dbg!(faz);
-    }
-}
+//
+// impl<B: laz::TyBundle> laz::Bundle<'_, B> {
+//     pub fn whee(&mut self) {
+//         let faz = cx!(self => faz);
+//         let a = cx!(self => mut foo);
+//         let b = cx!(self => bar).abs();
+//
+//         *a += b as u32;
+//
+//         cx!(self => maz).whee();
+//         dbg!(faz);
+//     }
+// }
 
 fn main() {}

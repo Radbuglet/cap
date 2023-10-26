@@ -7,7 +7,7 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-const-random = "0.1.15"
 proc-macro2 = "1.0.67"
+passing-macro = { git = "https://github.com/Radbuglet/passing-macro.git", rev = "8332700413cc6aa1922519b64d71e2a7fc6ac709" }
 quote = "1.0.33"
 syn = { version = "2.0.37", features = ["full"] }
