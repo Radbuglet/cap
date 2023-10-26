@@ -2,6 +2,7 @@ use proc_macro2::{Group, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::{
     braced,
+    ext::IdentExt,
     parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
     token::Brace,
@@ -52,13 +53,8 @@ pub struct CapMacroArg {
 pub struct CapDecl {
     pub vis: Visibility,
     pub name: Ident,
-    pub generics: CapDeclGenerics,
+    pub generics: SimpleGenerics,
     pub kind: CapDeclKind,
-}
-
-#[derive(Clone)]
-pub struct CapDeclGenerics {
-    pub params: Option<(Token![<], Punctuated<Ident, Token![,]>, Token![>])>,
 }
 
 #[derive(Clone)]
@@ -70,7 +66,7 @@ pub enum CapDeclKind {
 
 #[derive(Clone)]
 pub enum CapDeclBundleElement {
-    Component(CapDeclBundleElementMut, Path),
+    Component(CapDeclBundleElementMut, PlainGenericPath),
     Bundle(Path),
 }
 
@@ -111,32 +107,6 @@ impl ToTokens for CapDecl {
         self.name.to_tokens(tokens);
         self.generics.to_tokens(tokens);
         self.kind.to_tokens(tokens);
-    }
-}
-
-impl Parse for CapDeclGenerics {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if let Ok(open) = input.parse::<Token![<]>() {
-            Ok(Self {
-                params: Some((
-                    open,
-                    Punctuated::parse_separated_nonempty(input)?,
-                    input.parse::<Token![>]>()?,
-                )),
-            })
-        } else {
-            Ok(Self { params: None })
-        }
-    }
-}
-
-impl ToTokens for CapDeclGenerics {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        if let Some((open, list, close)) = &self.params {
-            open.to_tokens(tokens);
-            list.to_tokens(tokens);
-            close.to_tokens(tokens);
-        }
     }
 }
 
@@ -236,20 +206,6 @@ impl ToTokens for CapDeclBundleElementMut {
             CapDeclBundleElementMut::Ref(kw) => kw.to_tokens(tokens),
             CapDeclBundleElementMut::Mut(kw) => kw.to_tokens(tokens),
         }
-    }
-}
-
-impl CapDeclGenerics {
-    pub fn is_empty(&self) -> bool {
-        match &self.params {
-            Some((_, v, _)) if v.is_empty() => true,
-            None => true,
-            _ => false,
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Ident> + '_ {
-        self.params.iter().flat_map(|(_, v, _)| v.iter())
     }
 }
 
@@ -457,5 +413,96 @@ impl ToTokens for PathOrInt {
             PathOrInt::Path(path) => path.to_tokens(tokens),
             PathOrInt::Int(lit) => lit.to_tokens(tokens),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct PlainGenericPath {
+    pub root_prefix: Option<Token![::]>,
+    pub segments: Punctuated<PlainPathPart, Token![::]>,
+    pub generics: SimpleGenerics,
+}
+
+#[derive(Clone)]
+pub struct PlainPathPart(pub Ident);
+
+#[derive(Clone)]
+pub struct SimpleGenerics {
+    pub params: Option<(Token![<], Punctuated<Ident, Token![,]>, Token![>])>,
+}
+
+impl Parse for PlainGenericPath {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            root_prefix: input.parse()?,
+            segments: Punctuated::parse_separated_nonempty(input)?,
+            generics: input.parse()?,
+        })
+    }
+}
+
+impl ToTokens for PlainGenericPath {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.root_prefix.to_tokens(tokens);
+        self.segments.to_tokens(tokens);
+        self.generics.to_tokens(tokens);
+    }
+}
+
+impl Parse for PlainPathPart {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![crate]) || input.peek(Token![super]) || input.peek(Token![self]) {
+            Ok(Self(input.call(Ident::parse_any)?))
+        } else if let Ok(ident) = input.parse::<Ident>() {
+            Ok(Self(ident))
+        } else {
+            Err(input.error("expected crate, super, self, or an identifier"))
+        }
+    }
+}
+
+impl ToTokens for PlainPathPart {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.0.to_tokens(tokens);
+    }
+}
+
+impl Parse for SimpleGenerics {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if let Ok(open) = input.parse::<Token![<]>() {
+            Ok(Self {
+                params: Some((
+                    open,
+                    Punctuated::parse_separated_nonempty(input)?,
+                    input.parse::<Token![>]>()?,
+                )),
+            })
+        } else {
+            Ok(Self { params: None })
+        }
+    }
+}
+
+impl ToTokens for SimpleGenerics {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        if let Some((open, list, close)) = &self.params {
+            open.to_tokens(tokens);
+            list.to_tokens(tokens);
+            close.to_tokens(tokens);
+        }
+    }
+}
+
+impl SimpleGenerics {
+    pub fn is_empty(&self) -> bool {
+        match &self.params {
+            Some((_, v, _)) if v.is_empty() => true,
+            None => true,
+            _ => false,
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Ident> + '_ {
+        self.params.iter().flat_map(|(_, v, _)| v.iter())
     }
 }

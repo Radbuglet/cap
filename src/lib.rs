@@ -33,7 +33,10 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     begin_import(me, input, |input| {
         let CapDecl {
-            vis, name, kind, ..
+            vis,
+            name,
+            generics,
+            kind,
         } = &match syn::parse2::<CapDecl>(input) {
             Ok(input) => input,
             Err(err) => return err.into_compile_error(),
@@ -66,6 +69,14 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 });
             }
             syntax::CapDeclKind::CompTrait(_, comp) => {
+                if !generics.is_empty() {
+                    return Error::new(
+                        generics.span(),
+                        "trait components cannot have generic parameters currently",
+                    )
+                    .into_compile_error();
+                }
+
                 let id = unique_ident(name.span());
                 let (mod_id, exporter) = export(
                     vis,
@@ -91,6 +102,14 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 });
             }
             syntax::CapDeclKind::Bundle(_, bundle) => {
+                if !generics.is_empty() {
+                    return Error::new(
+                        generics.span(),
+                        "bundles cannot have generic parameters currently",
+                    )
+                    .into_compile_error();
+                }
+
                 // Load all members
                 let members = bundle
                     .iter()
