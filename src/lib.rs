@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use passing_macro::{begin_import, export, import, unique_ident, LazyImportGroup};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{spanned::Spanned, Error, LitBool, Path};
+use syn::{spanned::Spanned, Error, LitBool};
 
 mod syntax;
 mod util;
 
 use crate::syntax::{
-    CapDecl, CapMacroArg, ComponentDef, ItemDef,
-    {BundleDef, BundleMemberDef, CapDeclBundleElement, CxMacroArg},
+    BundleDef, BundleMemberDef, CapDecl, CapDeclBundleElement, CapMacroArg, ComponentDef,
+    CxMacroArg, ItemDef, PlainPath,
 };
 use crate::util::SynArray;
 
@@ -131,11 +131,12 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 for (member, def) in members {
                     match member {
-                        CapDeclBundleElement::Component(mutability, path) => {
+                        CapDeclBundleElement::Component(mutability, full_path) => {
+                            // Ensure that this is, indeed, a component.
                             let ItemDef::Component(def) = def.into_inner() else {
                                 errors.extend(
                                     Error::new(
-                                        path.span(),
+                                        full_path.span(),
                                         "expected component declaration, found bundle declaration",
                                     )
                                     .into_compile_error(),
@@ -143,13 +144,16 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 continue;
                             };
 
+                            // Handle its generics
+                            let base_path = &full_path.base;
+
                             fields
                                 .entry(def.id.to_string())
                                 .or_insert_with(|| {
                                     let re_exported_as = unique_ident(Span::call_site());
 
                                     re_exports.extend(quote! {
-                                        #vis use #path::CompTy as #re_exported_as;
+                                        #vis use #base_path::CompTy as #re_exported_as;
                                     });
 
                                     BundleMemberDef {
@@ -302,12 +306,14 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         match input {
             CxMacroArg::Fetch(input) => {
-                let path = &input.path;
+                let full_path = &input.path;
+                let base_path = &full_path.base;
                 let target = &input.expr;
-                let info = match syn::parse2::<ItemDef>(import(path).eval()) {
+                let info = match syn::parse2::<ItemDef>(import(base_path).eval()) {
                     Ok(info) => info,
                     Err(_) => {
-                        return Error::new(path.span(), "expected a cap item").into_compile_error();
+                        return Error::new(full_path.span(), "expected a cap item")
+                            .into_compile_error();
                     }
                 };
 
@@ -334,7 +340,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                             quote! { #id: #prefix #target.#id }
                         });
 
-                        construct_bundle(path, &info, field_getters)
+                        construct_bundle(base_path, &info, field_getters)
                     }
                 }
             }
@@ -351,7 +357,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     .map(|field| {
                         (
                             field,
-                            group.import(&field.path, make_def_parser(&field.path)),
+                            group.import(&field.path.base, make_def_parser(&field.path.base)),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -426,13 +432,13 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                     };
 
                                     if let FieldEntry::Missing = req {
-                                        let get_path = &field_req.path;
+                                        let get_path_full = &field_req.path;
                                         let get_reexport = &field_info.re_exported_as;
                                         let value_getter = &field_req.take_from;
 
                                         *req = FieldEntry::Present(
                                             quote! {{
-                                                use #get_path::#get_reexport as TARGET;
+                                                use #get_path_full::#get_reexport as TARGET;
                                                 #value_getter
                                             }},
                                             field_req.path.span(),
@@ -524,7 +530,7 @@ pub fn __ra_cx_hack(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 }
 
 fn construct_bundle(
-    base_path: &Path,
+    base_path: &PlainPath,
     info: &BundleDef,
     body: impl Iterator<Item = TokenStream>,
 ) -> TokenStream {

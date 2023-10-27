@@ -6,7 +6,7 @@ use syn::{
     parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
     token::Brace,
-    Expr, Ident, LitBool, LitInt, Path, Token, Type, TypeParamBound, Visibility,
+    Expr, Ident, LitBool, LitInt, Token, Type, TypeParamBound, Visibility,
 };
 
 use crate::util::{structured, SynArray};
@@ -67,7 +67,7 @@ pub enum CapDeclKind {
 #[derive(Clone)]
 pub enum CapDeclBundleElement {
     Component(CapDeclBundleElementMut, PlainGenericPath),
-    Bundle(Path),
+    Bundle(PlainPath),
 }
 
 #[derive(Clone)]
@@ -212,7 +212,7 @@ impl ToTokens for CapDeclBundleElementMut {
 impl CapDeclBundleElement {
     pub fn path(&self) -> TokenStream {
         match self {
-            CapDeclBundleElement::Component(_, path) => path.to_token_stream(),
+            CapDeclBundleElement::Component(_, path) => path.base.to_token_stream(),
             CapDeclBundleElement::Bundle(path) => path.to_token_stream(),
         }
     }
@@ -283,7 +283,7 @@ pub struct CxMacroArgFetch {
     pub expr: PlaceExpr,
     pub arr: Token![=>],
     pub optional_mut: Option<Token![mut]>,
-    pub path: Path,
+    pub path: PlainGenericPath,
 }
 
 impl Parse for CxMacroArgFetch {
@@ -309,7 +309,7 @@ impl ToTokens for CxMacroArgFetch {
 // Construct
 #[derive(Clone)]
 pub struct CxMacroArgConstruct {
-    pub path: Path,
+    pub path: PlainPath,
     pub brace: Brace,
     pub fields: Punctuated<CxMacroArgConstructField, Token![,]>,
 }
@@ -317,7 +317,7 @@ pub struct CxMacroArgConstruct {
 #[derive(Clone)]
 pub struct CxMacroArgConstructField {
     pub spread: Option<Token![...]>,
-    pub path: Path,
+    pub path: PlainGenericPath,
     pub equals: Token![=],
     pub take_from: Expr,
 }
@@ -370,7 +370,7 @@ pub struct PlaceExpr {
 }
 
 impl PlaceExpr {
-    pub fn as_path(&self) -> Option<&Path> {
+    pub fn as_path(&self) -> Option<&PlainPath> {
         if self.parts.len() != 1 {
             return None;
         }
@@ -400,13 +400,13 @@ impl ToTokens for PlaceExpr {
 
 #[derive(Clone)]
 pub enum PathOrInt {
-    Path(Path),
+    Path(PlainPath),
     Int(LitInt),
 }
 
 impl Parse for PathOrInt {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if let Ok(ident) = input.parse::<Path>() {
+        if let Ok(ident) = input.parse::<PlainPath>() {
             Ok(Self::Path(ident))
         } else if let Ok(lit) = input.parse::<LitInt>() {
             Ok(Self::Int(lit))
@@ -426,9 +426,14 @@ impl ToTokens for PathOrInt {
 }
 
 #[derive(Clone)]
-pub struct PlainGenericPath {
+pub struct PlainPath {
     pub root_prefix: Option<Token![::]>,
     pub segments: Punctuated<PlainPathPart, Token![::]>,
+}
+
+#[derive(Clone)]
+pub struct PlainGenericPath {
+    pub base: PlainPath,
     pub generics: SimpleGenerics,
 }
 
@@ -440,11 +445,26 @@ pub struct SimpleGenerics {
     pub params: Option<(Token![<], Punctuated<Ident, Token![,]>, Token![>])>,
 }
 
-impl Parse for PlainGenericPath {
+impl Parse for PlainPath {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             root_prefix: input.parse()?,
             segments: Punctuated::parse_separated_nonempty(input)?,
+        })
+    }
+}
+
+impl ToTokens for PlainPath {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.root_prefix.to_tokens(tokens);
+        self.segments.to_tokens(tokens);
+    }
+}
+
+impl Parse for PlainGenericPath {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            base: input.parse()?,
             generics: input.parse()?,
         })
     }
@@ -452,8 +472,7 @@ impl Parse for PlainGenericPath {
 
 impl ToTokens for PlainGenericPath {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.root_prefix.to_tokens(tokens);
-        self.segments.to_tokens(tokens);
+        self.base.to_tokens(tokens);
         self.generics.to_tokens(tokens);
     }
 }

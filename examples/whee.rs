@@ -2,12 +2,12 @@ use cap::{cap, cx};
 use std::{any::Any, fmt};
 
 cap! {
-    pub foo = u32;
+    pub foo<T> = u32;
     pub bar = i32;
     pub baz: Any;
     pub faz: fmt::Debug;
     pub maz => mut foo, ref bar, ref baz;
-    pub laz => maz, maz, mut baz, mut faz;
+    pub laz => maz, maz, mut baz<T>, mut faz;
 }
 
 impl<B: maz::TyBundle> maz::Bundle<'_, B> {
