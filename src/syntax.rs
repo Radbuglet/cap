@@ -6,41 +6,8 @@ use syn::{
     parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
     token::Brace,
-    Expr, Ident, LitBool, LitInt, Token, Type, TypeParamBound, Visibility,
+    Expr, Ident, LitInt, Token, Type, TypeParamBound, Visibility,
 };
-
-use crate::util::{structured, SynArray};
-
-// === ItemDef === //
-
-structured! {
-    #[derive(Clone)]
-    pub enum ItemDef {
-        Component(ComponentDef),
-        Bundle(BundleDef),
-    }
-
-    #[derive(Clone)]
-    pub struct ComponentDef {
-        pub id: Ident,
-        pub name: Ident,
-        pub is_trait: LitBool,
-    }
-
-    #[derive(Clone)]
-    pub struct BundleDef {
-        pub members: SynArray<BundleMemberDef>,
-    }
-
-    #[derive(Clone)]
-    pub struct BundleMemberDef {
-        pub id: Ident,
-        pub name: Ident,
-        pub is_mutable: LitBool,
-        pub is_trait: LitBool,
-        pub re_exported_as: Ident,
-    }
-}
 
 // === CapMacroArg === //
 
@@ -67,7 +34,7 @@ pub enum CapDeclKind {
 #[derive(Clone)]
 pub enum CapDeclBundleElement {
     Component(CapDeclBundleElementMut, GenericPlainPath),
-    Bundle(PlainPath),
+    Bundle(GenericPlainPath),
 }
 
 #[derive(Clone)]
@@ -210,10 +177,10 @@ impl ToTokens for CapDeclBundleElementMut {
 }
 
 impl CapDeclBundleElement {
-    pub fn path(&self) -> TokenStream {
+    pub fn path(&self) -> &GenericPlainPath {
         match self {
-            CapDeclBundleElement::Component(_, path) => path.base.to_token_stream(),
-            CapDeclBundleElement::Bundle(path) => path.to_token_stream(),
+            CapDeclBundleElement::Component(_, path) => path,
+            CapDeclBundleElement::Bundle(path) => path,
         }
     }
 }
@@ -558,7 +525,7 @@ impl ToTokens for GenericPlainPath {
 }
 
 impl GenericPlainPath {
-    pub fn is_empty(&self) -> bool {
+    pub fn has_generics(&self) -> bool {
         match &self.generics {
             Some((_, v, _)) if v.is_empty() => true,
             None => true,
@@ -566,7 +533,7 @@ impl GenericPlainPath {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &GenericPlainPath> + '_ {
+    pub fn iter_generics(&self) -> impl Iterator<Item = &GenericPlainPath> + '_ {
         self.generics.iter().flat_map(|(_, v, _)| v.iter())
     }
 }

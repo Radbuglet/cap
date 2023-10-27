@@ -5,14 +5,13 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{spanned::Spanned, Error, LitBool};
 
+mod ir;
 mod syntax;
 mod util;
 
 use crate::{
-    syntax::{
-        BundleDef, BundleMemberDef, CapDecl, CapDeclBundleElement, CapMacroArg, ComponentDef,
-        CxMacroArg, ItemDef, PlainPath,
-    },
+    ir::{BundleDef, BundleMemberDef, ComponentDef, GenericItemDef, ItemDef, make_def_parser},
+    syntax::{CapDecl, CapDeclBundleElement, CapMacroArg, CxMacroArg, PlainPath},
     util::SynArray,
 };
 
@@ -54,8 +53,9 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     name,
                     ItemDef::Component(ComponentDef {
                         id,
-                        name: name.clone(),
+                        name: name.to_token_stream(),
                         is_trait: LitBool::new(false, Span::call_site()),
+                        generics: generics.iter().cloned().collect(),
                     }),
                 );
 
@@ -85,8 +85,9 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     name,
                     ItemDef::Component(ComponentDef {
                         id,
-                        name: name.clone(),
+                        name: name.to_token_stream(),
                         is_trait: LitBool::new(true, Span::call_site()),
+                        generics: SynArray::from_iter([]),
                     }),
                 );
 
@@ -118,7 +119,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 let members = bundle
                     .iter()
-                    .map(|member| (member, group.import(member.path(), make_def_parser(member))))
+                    .map(|member| (member, GenericItemDef::new(&mut group, member.path())))
                     .collect::<Vec<_>>();
 
                 eval_group(group, &mut errors);
@@ -135,7 +136,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     match member {
                         CapDeclBundleElement::Component(mutability, full_path) => {
                             // Ensure that this is, indeed, a component.
-                            let ItemDef::Component(def) = def.into_inner() else {
+                            let ItemDef::Component(def) = def.base.into_inner() else {
                                 errors.extend(
                                     Error::new(
                                         full_path.span(),
@@ -167,13 +168,14 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                         ),
                                         is_trait: def.is_trait.clone(),
                                         re_exported_as,
+                                        last_applied_generic: None,
                                     }
                                 })
                                 .is_mutable
                                 .value |= mutability.is_mutable();
                         }
                         CapDeclBundleElement::Bundle(path) => {
-                            let ItemDef::Bundle(def) = def.into_inner() else {
+                            let ItemDef::Bundle(def) = def.base.into_inner() else {
                                 errors.extend(
                                     Error::new(
                                         path.span(),
@@ -201,6 +203,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                             is_mutable: def.is_mutable.clone(),
                                             is_trait: def.is_trait.clone(),
                                             re_exported_as,
+                                            last_applied_generic: None,
                                         }
                                     })
                                     .is_mutable
@@ -562,9 +565,4 @@ fn eval_group(mut group: LazyImportGroup<'_, syn::Error>, errors: &mut TokenStre
     if let Some(err) = group.eval() {
         errors.extend(err.iter().map(syn::Error::to_compile_error));
     }
-}
-
-fn make_def_parser(span: impl Spanned) -> impl FnOnce(TokenStream) -> syn::Result<ItemDef> {
-    let span = span.span();
-    move |v| syn::parse2(v).map_err(|_| syn::Error::new(span, "expected cap item"))
 }
