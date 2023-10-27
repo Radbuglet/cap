@@ -209,6 +209,15 @@ impl ToTokens for CapDeclBundleElementMut {
     }
 }
 
+impl CapDeclBundleElement {
+    pub fn path(&self) -> TokenStream {
+        match self {
+            CapDeclBundleElement::Component(_, path) => path.to_token_stream(),
+            CapDeclBundleElement::Bundle(path) => path.to_token_stream(),
+        }
+    }
+}
+
 impl CapDeclBundleElementMut {
     pub fn is_mutable(&self) -> bool {
         matches!(self, CapDeclBundleElementMut::Mut(_))

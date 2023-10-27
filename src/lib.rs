@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use passing_macro::{begin_import, export, import, unique_ident};
+use passing_macro::{begin_import, export, import, unique_ident, LazyImportGroup};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{spanned::Spanned, Error, LitBool, Path};
@@ -32,6 +32,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let me = &quote! { ::cap::__ra_cap_single_hack };
 
     begin_import(me, input, |input| {
+        // Parse the input
         let CapDecl {
             vis,
             name,
@@ -42,8 +43,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             Err(err) => return err.into_compile_error(),
         };
 
-        let mut output = TokenStream::new();
-
+        // Handle each kind of definition
         match kind {
             syntax::CapDeclKind::CompTy(_, comp) => {
                 let id = unique_ident(name.span());
@@ -57,7 +57,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }),
                 );
 
-                output.extend(quote! {
+                quote! {
                     #vis mod #mod_id {
                         #[allow(unused)]
                         use super::*;
@@ -66,7 +66,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }
 
                     #exporter
-                });
+                }
             }
             syntax::CapDeclKind::CompTrait(_, comp) => {
                 if !generics.is_empty() {
@@ -88,7 +88,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }),
                 );
 
-                output.extend(quote! {
+                quote! {
                     #vis mod #mod_id {
                         #[allow(unused)]
                         use super::*;
@@ -99,7 +99,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }
 
                     #exporter
-                });
+                }
             }
             syntax::CapDeclKind::Bundle(_, bundle) => {
                 if !generics.is_empty() {
@@ -111,33 +111,18 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 }
 
                 // Load all members
+                let mut errors = TokenStream::new();
+                let mut group = LazyImportGroup::new();
+
                 let members = bundle
                     .iter()
-                    .map(|member| match member {
-                        CapDeclBundleElement::Component(_, path) => (member, import(path)),
-                        CapDeclBundleElement::Bundle(path) => (member, import(path)),
-                    })
+                    .map(|member| (member, group.import(member.path(), make_def_parser(member))))
                     .collect::<Vec<_>>();
 
-                // Parse all of them
-                let mut has_errors = false;
-                let members = members
-                    .into_iter()
-                    .filter_map(|(member, def)| match syn::parse2::<ItemDef>(def.eval()) {
-                        Ok(def) => Some((member, def)),
-                        Err(_) => {
-                            output.extend(
-                                Error::new(member.span(), "expected a cap item")
-                                    .into_compile_error(),
-                            );
-                            has_errors = true;
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                eval_group(group, &mut errors);
 
-                if has_errors {
-                    return output;
+                if !errors.is_empty() {
+                    return errors;
                 }
 
                 // Collect the complete set of bundle fields
@@ -147,15 +132,14 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 for (member, def) in members {
                     match member {
                         CapDeclBundleElement::Component(mutability, path) => {
-                            let ItemDef::Component(def) = def else {
-                                output.extend(
+                            let ItemDef::Component(def) = def.into_inner() else {
+                                errors.extend(
                                     Error::new(
                                         path.span(),
                                         "expected component declaration, found bundle declaration",
                                     )
                                     .into_compile_error(),
                                 );
-                                has_errors = true;
                                 continue;
                             };
 
@@ -183,15 +167,14 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 .value |= mutability.is_mutable();
                         }
                         CapDeclBundleElement::Bundle(path) => {
-                            let ItemDef::Bundle(def) = def else {
-                                output.extend(
+                            let ItemDef::Bundle(def) = def.into_inner() else {
+                                errors.extend(
                                     Error::new(
                                         path.span(),
                                         "expected bundle declaration, found component declaration",
                                     )
                                     .into_compile_error(),
                                 );
-                                has_errors = true;
                                 continue;
                             };
 
@@ -221,8 +204,8 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }
                 }
 
-                if has_errors {
-                    return output;
+                if !errors.is_empty() {
+                    return errors;
                 }
 
                 // Define bundle
@@ -277,7 +260,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     }),
                 );
 
-                output.extend(quote! {
+                quote! {
                     #exporter
 
                     #vis mod #mod_id {
@@ -300,11 +283,9 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                         #re_exports
                     }
-                });
+                }
             }
         }
-
-        output
     })
     .into()
 }
@@ -359,45 +340,30 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
             CxMacroArg::Construct(input) => {
                 // Fetch the items of interest
-                let info = import(&input.path);
+                let mut errors = TokenStream::new();
+                let mut group = LazyImportGroup::new();
+
+                let info = group.import(&input.path, make_def_parser(&input.path));
 
                 let fields = input
                     .fields
                     .iter()
-                    .map(|field| (field, import(&field.path)))
-                    .collect::<Vec<_>>();
-
-                // Evaluate and parse them
-                let mut errors = TokenStream::new();
-
-                let info = match syn::parse2::<ItemDef>(info.eval()) {
-                    Ok(info) => info,
-                    Err(_) => {
-                        return Error::new(input.path.span(), "expected a cap item")
-                            .into_compile_error();
-                    }
-                };
-
-                let fields = fields
-                    .into_iter()
-                    .filter_map(|(field, info)| match syn::parse2::<ItemDef>(info.eval()) {
-                        Ok(info) => Some((field, info)),
-                        Err(_) => {
-                            errors.extend(
-                                Error::new(field.path.span(), "expected a cap item")
-                                    .into_compile_error(),
-                            );
-                            None
-                        }
+                    .map(|field| {
+                        (
+                            field,
+                            group.import(&field.path, make_def_parser(&field.path)),
+                        )
                     })
                     .collect::<Vec<_>>();
+
+                eval_group(group, &mut errors);
 
                 if !errors.is_empty() {
                     return errors;
                 }
 
                 // Enure that info is a bundle
-                let info = match info {
+                let info = match info.into_inner() {
                     ItemDef::Bundle(info) => info,
                     ItemDef::Component(_) => {
                         return Error::new(input.path.span(), "expected bundle, found component")
@@ -425,7 +391,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     .collect::<HashMap<_, _>>();
 
                 for (field_req, field_info) in &fields {
-                    match field_info {
+                    match &**field_info {
                         ItemDef::Component(field_info) => {
                             if let Some(spread) = field_req.spread {
                                 errors.extend(
@@ -582,4 +548,15 @@ fn get_reborrow_prefix(is_mutable: bool) -> TokenStream {
     } else {
         quote! { &* }
     }
+}
+
+fn eval_group(mut group: LazyImportGroup<'_, syn::Error>, errors: &mut TokenStream) {
+    if let Some(err) = group.eval() {
+        errors.extend(err.iter().map(syn::Error::to_compile_error));
+    }
+}
+
+fn make_def_parser(span: impl Spanned) -> impl FnOnce(TokenStream) -> syn::Result<ItemDef> {
+    let span = span.span();
+    move |v| syn::parse2(v).map_err(|_| syn::Error::new(span, "expected cap item"))
 }

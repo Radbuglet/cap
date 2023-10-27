@@ -10,33 +10,6 @@ use syn::{
     Token,
 };
 
-// === Braced === //
-
-#[derive(Clone)]
-pub struct Braced<V> {
-    pub brace: Brace,
-    pub value: V,
-}
-
-impl<V: Parse> Parse for Braced<V> {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let value;
-
-        Ok(Self {
-            brace: braced!(value in input),
-            value: value.parse()?,
-        })
-    }
-}
-
-impl<V: ToTokens> ToTokens for Braced<V> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let mut group = Group::new(Delimiter::Brace, self.value.to_token_stream());
-        group.set_span(self.brace.span.join());
-        tokens.extend([TokenTree::Group(group)]);
-    }
-}
-
 // === Structured === //
 
 #[doc(hidden)]
@@ -227,6 +200,8 @@ macro_rules! structured {
 
 pub(crate) use structured;
 
+// === Structured Helpers === //
+
 #[derive(Clone)]
 pub struct Nop;
 
@@ -291,5 +266,30 @@ impl<T: ToTokens> ToTokens for SynArray<T> {
             Delimiter::Bracket,
             self.contents.to_token_stream(),
         ))])
+    }
+}
+
+#[derive(Clone)]
+pub struct Braced<V> {
+    pub brace: Brace,
+    pub value: V,
+}
+
+impl<V: Parse> Parse for Braced<V> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let value;
+
+        Ok(Self {
+            brace: braced!(value in input),
+            value: value.parse()?,
+        })
+    }
+}
+
+impl<V: ToTokens> ToTokens for Braced<V> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let mut group = Group::new(Delimiter::Brace, self.value.to_token_stream());
+        group.set_span(self.brace.span.join());
+        tokens.extend([TokenTree::Group(group)]);
     }
 }
