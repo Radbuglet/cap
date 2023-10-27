@@ -53,7 +53,7 @@ pub struct CapMacroArg {
 pub struct CapDecl {
     pub vis: Visibility,
     pub name: Ident,
-    pub generics: SimpleGenerics,
+    pub generics: SimpleGenericsDecl,
     pub kind: CapDeclKind,
 }
 
@@ -66,7 +66,7 @@ pub enum CapDeclKind {
 
 #[derive(Clone)]
 pub enum CapDeclBundleElement {
-    Component(CapDeclBundleElementMut, PlainGenericPath),
+    Component(CapDeclBundleElementMut, GenericPlainPath),
     Bundle(PlainPath),
 }
 
@@ -283,7 +283,7 @@ pub struct CxMacroArgFetch {
     pub expr: PlaceExpr,
     pub arr: Token![=>],
     pub optional_mut: Option<Token![mut]>,
-    pub path: PlainGenericPath,
+    pub path: GenericPlainPath,
 }
 
 impl Parse for CxMacroArgFetch {
@@ -317,7 +317,7 @@ pub struct CxMacroArgConstruct {
 #[derive(Clone)]
 pub struct CxMacroArgConstructField {
     pub spread: Option<Token![...]>,
-    pub path: PlainGenericPath,
+    pub path: GenericPlainPath,
     pub equals: Token![=],
     pub take_from: Expr,
 }
@@ -363,7 +363,9 @@ impl ToTokens for CxMacroArgConstructField {
     }
 }
 
-// Helpers
+// === Helpers === //
+
+// PlaceExpr
 #[derive(Clone)]
 pub struct PlaceExpr {
     parts: Punctuated<PathOrInt, Token![.]>,
@@ -398,6 +400,7 @@ impl ToTokens for PlaceExpr {
     }
 }
 
+// PathOrInt
 #[derive(Clone)]
 pub enum PathOrInt {
     Path(PlainPath),
@@ -425,6 +428,7 @@ impl ToTokens for PathOrInt {
     }
 }
 
+// PlainPath
 #[derive(Clone)]
 pub struct PlainPath {
     pub root_prefix: Option<Token![::]>,
@@ -432,18 +436,7 @@ pub struct PlainPath {
 }
 
 #[derive(Clone)]
-pub struct PlainGenericPath {
-    pub base: PlainPath,
-    pub generics: SimpleGenerics,
-}
-
-#[derive(Clone)]
 pub struct PlainPathPart(pub Ident);
-
-#[derive(Clone)]
-pub struct SimpleGenerics {
-    pub params: Option<(Token![<], Punctuated<Ident, Token![,]>, Token![>])>,
-}
 
 impl Parse for PlainPath {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -458,22 +451,6 @@ impl ToTokens for PlainPath {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         self.root_prefix.to_tokens(tokens);
         self.segments.to_tokens(tokens);
-    }
-}
-
-impl Parse for PlainGenericPath {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(Self {
-            base: input.parse()?,
-            generics: input.parse()?,
-        })
-    }
-}
-
-impl ToTokens for PlainGenericPath {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.base.to_tokens(tokens);
-        self.generics.to_tokens(tokens);
     }
 }
 
@@ -495,7 +472,13 @@ impl ToTokens for PlainPathPart {
     }
 }
 
-impl Parse for SimpleGenerics {
+// SimpleGenericsDecl
+#[derive(Clone)]
+pub struct SimpleGenericsDecl {
+    pub params: Option<(Token![<], Punctuated<Ident, Token![,]>, Token![>])>,
+}
+
+impl Parse for SimpleGenericsDecl {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if let Ok(open) = input.parse::<Token![<]>() {
             Ok(Self {
@@ -511,7 +494,7 @@ impl Parse for SimpleGenerics {
     }
 }
 
-impl ToTokens for SimpleGenerics {
+impl ToTokens for SimpleGenericsDecl {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         if let Some((open, list, close)) = &self.params {
             open.to_tokens(tokens);
@@ -521,7 +504,7 @@ impl ToTokens for SimpleGenerics {
     }
 }
 
-impl SimpleGenerics {
+impl SimpleGenericsDecl {
     pub fn is_empty(&self) -> bool {
         match &self.params {
             Some((_, v, _)) if v.is_empty() => true,
@@ -532,5 +515,58 @@ impl SimpleGenerics {
 
     pub fn iter(&self) -> impl Iterator<Item = &Ident> + '_ {
         self.params.iter().flat_map(|(_, v, _)| v.iter())
+    }
+}
+
+// GenericPlainPath
+#[derive(Clone)]
+pub struct GenericPlainPath {
+    pub base: PlainPath,
+    pub generics: Option<(
+        Token![<],
+        Punctuated<GenericPlainPath, Token![,]>,
+        Token![>],
+    )>,
+}
+
+impl Parse for GenericPlainPath {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let base = input.parse()?;
+        let generics = match input.parse::<Token![<]>() {
+            Ok(open) => Some((
+                open,
+                Punctuated::parse_separated_nonempty(input)?,
+                input.parse::<Token![>]>()?,
+            )),
+            Err(_) => None,
+        };
+
+        Ok(Self { base, generics })
+    }
+}
+
+impl ToTokens for GenericPlainPath {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.base.to_tokens(tokens);
+
+        if let Some((open, list, close)) = &self.generics {
+            open.to_tokens(tokens);
+            list.to_tokens(tokens);
+            close.to_tokens(tokens);
+        }
+    }
+}
+
+impl GenericPlainPath {
+    pub fn is_empty(&self) -> bool {
+        match &self.generics {
+            Some((_, v, _)) if v.is_empty() => true,
+            None => true,
+            _ => false,
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &GenericPlainPath> + '_ {
+        self.generics.iter().flat_map(|(_, v, _)| v.iter())
     }
 }

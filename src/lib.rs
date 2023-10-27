@@ -8,11 +8,13 @@ use syn::{spanned::Spanned, Error, LitBool};
 mod syntax;
 mod util;
 
-use crate::syntax::{
-    BundleDef, BundleMemberDef, CapDecl, CapDeclBundleElement, CapMacroArg, ComponentDef,
-    CxMacroArg, ItemDef, PlainPath,
+use crate::{
+    syntax::{
+        BundleDef, BundleMemberDef, CapDecl, CapDeclBundleElement, CapMacroArg, ComponentDef,
+        CxMacroArg, ItemDef, PlainPath,
+    },
+    util::SynArray,
 };
-use crate::util::SynArray;
 
 #[proc_macro]
 pub fn cap(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
