@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use passing_macro::{begin_import, export, import, unique_ident, LazyImportGroup};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{spanned::Spanned, Error, LitBool};
+use syn::{spanned::Spanned, Error, LitBool, LitStr};
 
 mod ir;
 mod syntax;
 mod util;
 
 use crate::{
-    ir::{BundleDef, BundleMemberDef, ComponentDef, GenericItemDef, ItemDef, make_def_parser},
+    ir::{make_def_parser, BundleDef, BundleMemberDef, ComponentDef, GenericItemDef, ItemDef},
     syntax::{CapDecl, CapDeclBundleElement, CapMacroArg, CxMacroArg, PlainPath},
     util::SynArray,
 };
@@ -53,7 +53,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     name,
                     ItemDef::Component(ComponentDef {
                         id,
-                        name: name.to_token_stream(),
+                        name: LitStr::new(&name.to_string(), Span::call_site()),
                         is_trait: LitBool::new(false, Span::call_site()),
                         generics: generics.iter().cloned().collect(),
                     }),
@@ -85,7 +85,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     name,
                     ItemDef::Component(ComponentDef {
                         id,
-                        name: name.to_token_stream(),
+                        name: LitStr::new(&name.to_string(), Span::call_site()),
                         is_trait: LitBool::new(true, Span::call_site()),
                         generics: SynArray::from_iter([]),
                     }),
@@ -136,7 +136,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     match member {
                         CapDeclBundleElement::Component(mutability, full_path) => {
                             // Ensure that this is, indeed, a component.
-                            let ItemDef::Component(def) = def.base.into_inner() else {
+                            let ItemDef::Component(def) = def.base_def.into_inner() else {
                                 errors.extend(
                                     Error::new(
                                         full_path.span(),
@@ -175,7 +175,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 .value |= mutability.is_mutable();
                         }
                         CapDeclBundleElement::Bundle(path) => {
-                            let ItemDef::Bundle(def) = def.base.into_inner() else {
+                            let ItemDef::Bundle(def) = def.base_def.into_inner() else {
                                 errors.extend(
                                     Error::new(
                                         path.span(),
@@ -492,8 +492,11 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     // TODO: Improve diagnostics
                     match entry {
                         FieldEntry::Missing => errors.extend(
-                            Error::new(input.brace.span.join(), &format!("missing field {name}",))
-                                .into_compile_error(),
+                            Error::new(
+                                input.brace.span.join(),
+                                &format!("missing field {}", name.value()),
+                            )
+                            .into_compile_error(),
                         ),
                         FieldEntry::Present(getter, _) => fields.push(quote! { #id: #getter }),
                         FieldEntry::Doubled(spans) => {

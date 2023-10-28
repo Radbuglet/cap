@@ -1,6 +1,11 @@
-use std::ops::{Deref, DerefMut};
+use core::fmt;
+use std::{
+    borrow::Borrow,
+    ops::{Deref, DerefMut},
+};
 
-use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
+use passing_macro::UNIQUE_IDENT_PREFIX;
+use proc_macro2::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::{
     braced, bracketed,
@@ -9,6 +14,22 @@ use syn::{
     token::Brace,
     Token,
 };
+
+// === IDs === //
+
+pub fn combine_idents<'a, I: Borrow<Ident>>(
+    span: Span,
+    idents: impl IntoIterator<Item = I>,
+) -> Ident {
+    let mut id = UNIQUE_IDENT_PREFIX.to_string();
+    for ident in idents {
+        let ident = ident.borrow().to_string();
+        assert!(ident.starts_with(UNIQUE_IDENT_PREFIX));
+        id.push_str(&ident[UNIQUE_IDENT_PREFIX.len()..]);
+    }
+
+    Ident::new(&id, span)
+}
 
 // === Structured === //
 
@@ -292,4 +313,36 @@ impl<V: ToTokens> ToTokens for Braced<V> {
         group.set_span(self.brace.span.join());
         tokens.extend([TokenTree::Group(group)]);
     }
+}
+
+// === Formatter === //
+
+pub struct FnFormatter<F>(pub F);
+
+impl<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result> fmt::Display for FnFormatter<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
+pub fn format_fn<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result>(f: F) -> FnFormatter<F> {
+    FnFormatter(f)
+}
+
+pub fn format_list<'a, I>(iter: I, sep: &'a impl fmt::Display) -> impl fmt::Display + 'a
+where
+    I: 'a + IntoIterator + Clone,
+    I::Item: fmt::Display,
+{
+    format_fn(move |f| {
+        let mut is_subsequent = false;
+        for item in iter.clone() {
+            if is_subsequent {
+                fmt::Display::fmt(sep, f)?;
+            }
+            is_subsequent = true;
+            fmt::Display::fmt(&item, f)?;
+        }
+        Ok(())
+    })
 }
