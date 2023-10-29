@@ -107,112 +107,112 @@ macro_rules! structured {
         /* muncher base case */
     };
     (
-		$(#[$attr:meta])*
-		$vis:vis struct $name:ident {
-			$(
-				$(#[$f_attr:meta])*
-				$f_vis:vis $f_name:ident: $f_ty:ty
-			),*
-			$(,)?
-		}
+        $(#[$attr:meta])*
+        $vis:vis struct $name:ident {
+            $(
+                $(#[$f_attr:meta])*
+                $f_vis:vis $f_name:ident: $f_ty:ty
+            ),*
+            $(,)?
+        }
 
-		$($rest:tt)*
-	) => {
-		$(#[$attr])*
-		$vis struct $name {
-			$(
-				$(#[$f_attr])*
-				$f_vis $f_name: $f_ty
-			),*
-		}
+        $($rest:tt)*
+    ) => {
+        $(#[$attr])*
+        $vis struct $name {
+            $(
+                $(#[$f_attr])*
+                $f_vis $f_name: $f_ty
+            ),*
+        }
 
         impl $crate::util::structured_macro_internals::Parse for $name {
-			#[allow(unused)]
-			fn parse(input: $crate::util::structured_macro_internals::ParseStream) -> $crate::util::structured_macro_internals::SynResult<Self> {
-				$crate::util::structured_macro_internals::parse_dyn_kw(
-					input,
-					$crate::util::structured_macro_internals::stringify!($name),
-				)?;
+            #[allow(unused)]
+            fn parse(input: $crate::util::structured_macro_internals::ParseStream) -> $crate::util::structured_macro_internals::SynResult<Self> {
+                $crate::util::structured_macro_internals::parse_dyn_kw(
+                    input,
+                    $crate::util::structured_macro_internals::stringify!($name),
+                )?;
 
-				let input_inner;
-				$crate::util::structured_macro_internals::braced!(input_inner in input);
+                let input_inner;
+                $crate::util::structured_macro_internals::braced!(input_inner in input);
 
-				$crate::util::structured_macro_internals::Ok(Self {
-					$($f_name: $crate::util::structured_macro_internals::parse_kv(
-						&input_inner,
-						$crate::util::structured_macro_internals::stringify!($f_name),
-					)?,)*
-				})
-			}
-		}
+                $crate::util::structured_macro_internals::Ok(Self {
+                    $($f_name: $crate::util::structured_macro_internals::parse_kv(
+                        &input_inner,
+                        $crate::util::structured_macro_internals::stringify!($f_name),
+                    )?,)*
+                })
+            }
+        }
 
-		impl $crate::util::structured_macro_internals::ToTokens for $name {
-			fn to_tokens(&self, tokens: &mut $crate::util::structured_macro_internals::TokenStream) {
-				$crate::util::structured_macro_internals::write_dyn_kw(
-					tokens,
-					$crate::util::structured_macro_internals::stringify!($name),
-				);
+        impl $crate::util::structured_macro_internals::ToTokens for $name {
+            fn to_tokens(&self, tokens: &mut $crate::util::structured_macro_internals::TokenStream) {
+                $crate::util::structured_macro_internals::write_dyn_kw(
+                    tokens,
+                    $crate::util::structured_macro_internals::stringify!($name),
+                );
 
-				$crate::util::structured_macro_internals::write_group(tokens, |tokens| {
-					$($crate::util::structured_macro_internals::write_kv(
-						tokens,
-						&$crate::util::structured_macro_internals::stringify!($f_name),
-						&self.$f_name
-					);)*
-				});
-			}
-		}
+                $crate::util::structured_macro_internals::write_group(tokens, |tokens| {
+                    $($crate::util::structured_macro_internals::write_kv(
+                        tokens,
+                        &$crate::util::structured_macro_internals::stringify!($f_name),
+                        &self.$f_name
+                    );)*
+                });
+            }
+        }
 
-		$crate::util::structured_macro_internals::structured!($($rest)*);
+        $crate::util::structured_macro_internals::structured!($($rest)*);
     };
-	(
-		$(#[$attr:meta])*
-		$vis:vis enum $name:ident {
-			$($f_name:ident($f_vis:vis $f_ty:ty)),*
-			$(,)?
-		}
+    (
+        $(#[$attr:meta])*
+        $vis:vis enum $name:ident {
+            $($f_name:ident($f_vis:vis $f_ty:ty)),*
+            $(,)?
+        }
 
-		$($rest:tt)*
-	) => {
-		$(#[$attr])*
-		#[allow(dead_code)]
-		$vis enum $name {
-			$($f_name($f_vis $f_ty)),*
-		}
+        $($rest:tt)*
+    ) => {
+        $(#[$attr])*
+        #[allow(dead_code)]
+        $vis enum $name {
+            $($f_name($f_vis $f_ty)),*
+        }
 
         impl $crate::util::structured_macro_internals::Parse for $name {
-			#[allow(unused)]
-			fn parse(input: $crate::util::structured_macro_internals::ParseStream) -> $crate::util::structured_macro_internals::SynResult<Self> {
-				$(if $crate::util::structured_macro_internals::parse_dyn_kw(input, $crate::util::structured_macro_internals::stringify!($f_name)).is_ok() {
-					return $crate::util::structured_macro_internals::Ok(
-						Self::$f_name($crate::util::structured_macro_internals::parse_grouped(input)?)
-					);
-				})*
+            #[allow(unused)]
+            fn parse(input: $crate::util::structured_macro_internals::ParseStream) -> $crate::util::structured_macro_internals::SynResult<Self> {
+                $(if $crate::util::structured_macro_internals::parse_dyn_kw(input, $crate::util::structured_macro_internals::stringify!($f_name)).is_ok() {
+                    return $crate::util::structured_macro_internals::Ok(
+                        Self::$f_name($crate::util::structured_macro_internals::parse_grouped(input)?)
+                    );
+                })*
 
-				$crate::util::structured_macro_internals::Err(input.error("unexpected enum variant"))
-			}
-		}
+                $crate::util::structured_macro_internals::Err(input.error("unexpected enum variant"))
+            }
+        }
 
-		impl $crate::util::structured_macro_internals::ToTokens for $name {
-			fn to_tokens(&self, tokens: &mut $crate::util::structured_macro_internals::TokenStream) {
-				match self {
-					$(Self::$f_name(inner) => {
-						$crate::util::structured_macro_internals::write_dyn_kw(
-							tokens,
-							$crate::util::structured_macro_internals::stringify!($f_name)
-						);
+        impl $crate::util::structured_macro_internals::ToTokens for $name {
+            fn to_tokens(&self, tokens: &mut $crate::util::structured_macro_internals::TokenStream) {
+                match self {
+                    $(Self::$f_name(inner) => {
+                        $crate::util::structured_macro_internals::write_dyn_kw(
+                            tokens,
+                            $crate::util::structured_macro_internals::stringify!($f_name)
+                        );
 
-						$crate::util::structured_macro_internals::write_group(tokens, |tokens| {
-							$crate::util::structured_macro_internals::ToTokens::to_tokens(inner, tokens);
-						});
-					},)*
-					#[allow(unreachable_patterns)]  // Used for empty enums
-					_ => { let _ = tokens; },
-				}
-			}
-		}
+                        $crate::util::structured_macro_internals::write_group(tokens, |tokens| {
+                            $crate::util::structured_macro_internals::ToTokens::to_tokens(inner, tokens);
+                        });
+                    },)*
+                    #[allow(unreachable_patterns)]  // Used for empty enums
+                    _ => { let _ = tokens; },
+                }
+            }
+        }
 
-		$crate::util::structured_macro_internals::structured!($($rest)*);
+        $crate::util::structured_macro_internals::structured!($($rest)*);
     };
 }
 

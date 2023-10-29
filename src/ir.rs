@@ -193,9 +193,9 @@ impl<'a> GenericItemDef<'a> {
                 if paras_with_members.len() > 1 {
                     for para in paras_with_members {
                         errors.extend(
-							Error::new(para.full_path.span(), "only one generic component parameter can be parameterized by a bundle")
-								.into_compile_error(),
-						);
+                            Error::new(para.full_path.span(), "only one generic component parameter can be parameterized by a bundle")
+                                .into_compile_error(),
+                        );
                     }
                     return Err(());
                 }
@@ -216,11 +216,11 @@ impl<'a> GenericItemDef<'a> {
                     Ok(chosen_bundle
                         .into_iter()
                         .map(|member| {
-							dbg!(&member.data.last_applied_generic);
-							dbg!(&comp.id);
-							if member.data.last_applied_generic.as_ref() == Some(&comp.id) {
-								return member;
-							}
+                            dbg!(&member.data.last_applied_generic);
+                            dbg!(&comp.id);
+                            if member.data.last_applied_generic.as_ref() == Some(&comp.id) {
+                                return member;
+                            }
 
                             let id = Self::comp_id_raw(
                                 comp.id.clone(),
@@ -235,26 +235,26 @@ impl<'a> GenericItemDef<'a> {
                                         }
                                     }),
                             );
-							let mut name = comp.name.value();
-							if !self.generics.is_empty() {
-								name.push('<');
+                            let mut name = comp.name.value();
+                            if !self.generics.is_empty() {
+                                name.push('<');
 
-								let mut is_subsequent = false;
-								for (other_para_idx, para) in self.generics.iter().enumerate() {
-									if is_subsequent {
-										name.push_str(", ");
-									}
-									is_subsequent = true;
+                                let mut is_subsequent = false;
+                                for (other_para_idx, para) in self.generics.iter().enumerate() {
+                                    if is_subsequent {
+                                        name.push_str(", ");
+                                    }
+                                    is_subsequent = true;
 
-									if chosen_bundle_idx == other_para_idx {
-										name.push_str(&member.data.name.value());
-									} else {
-										name.push_str(&para.comp_name().value());
-									}
-								}
+                                    if chosen_bundle_idx == other_para_idx {
+                                        name.push_str(&member.data.name.value());
+                                    } else {
+                                        name.push_str(&para.comp_name().value());
+                                    }
+                                }
 
-								name.push('>');
-							}
+                                name.push('>');
+                            }
 
                             let from_path_generics =
                                 self.generics
