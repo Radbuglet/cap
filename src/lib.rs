@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use passing_macro::{begin_import, export, import, unique_ident, LazyImportGroup};
+use passing_macro::{begin_import, export, unique_ident, LazyImportGroup};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{spanned::Spanned, Error, LitBool, LitStr};
@@ -168,7 +168,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                             Span::call_site(),
                                         ),
                                         is_trait: ir.comp_def().is_trait.clone(),
-                                        last_applied_generic: None,
+                                        last_applied_generic: Some(ir.comp_def().id.clone()),
                                     }
                                 })
                                 .is_mutable
@@ -307,21 +307,25 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         match input {
             CxMacroArg::Fetch(input) => {
-                let full_path = &input.path;
-                let base_path = &full_path.base;
+                let mut errors = TokenStream::new();
+                let mut group = LazyImportGroup::new();
                 let target = &input.expr;
-                let info = match syn::parse2::<ItemDef>(import(base_path).eval()) {
-                    Ok(info) => info,
-                    Err(_) => {
-                        return Error::new(full_path.span(), "expected a cap item")
-                            .into_compile_error();
-                    }
-                };
+                let comp_def = GenericItemDef::new(&mut group, &input.path);
 
-                match info {
-                    ItemDef::Component(info) => {
+                eval_group(group, &mut errors);
+                if !errors.is_empty() {
+                    return errors;
+                }
+
+                match &*comp_def.base_def {
+                    ItemDef::Component(_) => {
+                        let _ = comp_def.comp_validate(&mut errors);
+                        if !errors.is_empty() {
+                            return errors;
+                        }
+
                         let prefix = get_reborrow_prefix(input.optional_mut.is_some());
-                        let id = &info.id;
+                        let id = comp_def.comp_id();
 
                         quote! { #prefix #target.#id }
                     }
@@ -334,6 +338,14 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                             .into_compile_error();
                         }
 
+                        if !comp_def.generics.is_empty() {
+                            return Error::new(
+                                comp_def.full_path.span(),
+                                "cannot acquire generic bundles; define a new bundle for it",
+                            )
+                            .into_compile_error();
+                        }
+
                         let field_getters = info.members.iter().map(|member| {
                             let prefix = get_reborrow_prefix(member.is_mutable.value);
                             let id = &member.id;
@@ -341,7 +353,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                             quote! { #id: #prefix #target.#id }
                         });
 
-                        construct_bundle(base_path, &info, field_getters)
+                        construct_bundle(comp_def.base_path(), info, field_getters)
                     }
                 }
             }
@@ -355,12 +367,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let fields = input
                     .fields
                     .iter()
-                    .map(|field| {
-                        (
-                            field,
-                            group.import(&field.path.base, make_def_parser(&field.path.base)),
-                        )
-                    })
+                    .map(|field| (field, GenericItemDef::new(&mut group, &field.path)))
                     .collect::<Vec<_>>();
 
                 eval_group(group, &mut errors);
@@ -397,17 +404,24 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     })
                     .collect::<HashMap<_, _>>();
 
-                for (field_req, field_info) in &fields {
-                    match &**field_info {
-                        ItemDef::Component(field_info) => {
+                for (field_req, field_ir) in &fields {
+                    match &*field_ir.base_def {
+                        ItemDef::Component(_) => {
+                            if field_ir.comp_validate(&mut errors).is_err() {
+                                continue;
+                            }
+
                             if let Some(spread) = field_req.spread {
                                 errors.extend(
                                     Error::new(spread.span(), "cannot spread a component")
                                         .into_compile_error(),
                                 );
+                                continue;
                             }
 
-                            let Some((_, _, req)) = fetch_map.get_mut(&field_info.id) else {
+                            let id = field_ir.comp_id();
+
+                            let Some((_, _, req)) = fetch_map.get_mut(&id) else {
                                 continue;
                             };
 
@@ -485,7 +499,6 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let mut fields = Vec::new();
 
                 for (id, (_, name, entry)) in &fetch_map {
-                    // TODO: Improve diagnostics
                     match entry {
                         FieldEntry::Missing => errors.extend(
                             Error::new(
@@ -524,9 +537,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro]
 #[doc(hidden)]
 pub fn __ra_cap_single_hack(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let out = __cap_single(input);
-    eprintln!("{out}");
-    out
+    __cap_single(input)
 }
 
 #[proc_macro]

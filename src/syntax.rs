@@ -525,14 +525,6 @@ impl ToTokens for GenericPlainPath {
 }
 
 impl GenericPlainPath {
-    pub fn has_generics(&self) -> bool {
-        match &self.generics {
-            Some((_, v, _)) if v.is_empty() => true,
-            None => true,
-            _ => false,
-        }
-    }
-
     pub fn iter_generics(&self) -> impl Iterator<Item = &GenericPlainPath> + '_ {
         self.generics.iter().flat_map(|(_, v, _)| v.iter())
     }

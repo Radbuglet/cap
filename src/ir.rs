@@ -216,6 +216,12 @@ impl<'a> GenericItemDef<'a> {
                     Ok(chosen_bundle
                         .into_iter()
                         .map(|member| {
+							dbg!(&member.data.last_applied_generic);
+							dbg!(&comp.id);
+							if member.data.last_applied_generic.as_ref() == Some(&comp.id) {
+								return member;
+							}
+
                             let id = Self::comp_id_raw(
                                 comp.id.clone(),
                                 self.generics
@@ -229,6 +235,27 @@ impl<'a> GenericItemDef<'a> {
                                         }
                                     }),
                             );
+							let mut name = comp.name.value();
+							if !self.generics.is_empty() {
+								name.push('<');
+
+								let mut is_subsequent = false;
+								for (other_para_idx, para) in self.generics.iter().enumerate() {
+									if is_subsequent {
+										name.push_str(", ");
+									}
+									is_subsequent = true;
+
+									if chosen_bundle_idx == other_para_idx {
+										name.push_str(&member.data.name.value());
+									} else {
+										name.push_str(&para.comp_name().value());
+									}
+								}
+
+								name.push('>');
+							}
+
                             let from_path_generics =
                                 self.generics
                                     .iter()
@@ -246,7 +273,7 @@ impl<'a> GenericItemDef<'a> {
                             BundleMemberDefWithReExporter {
                                 data: BundleMemberDef {
                                     id,
-                                    name: LitStr::new("TODO", Span::call_site()), // TODO
+                                    name: LitStr::new(&name, Span::call_site()),
                                     is_mutable: member.data.is_mutable,
                                     is_trait: member.data.is_trait,
                                     last_applied_generic: Some(comp.id.clone()),
