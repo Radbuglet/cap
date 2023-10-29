@@ -49,11 +49,14 @@ pub struct GenericItemDef<'a> {
 }
 
 impl<'a> GenericItemDef<'a> {
-    pub fn new(group: &mut LazyImportGroup<'a, syn::Error>, path: &'a GenericPlainPath) -> Self {
+    pub fn new(
+        group: &mut LazyImportGroup<'a, syn::Error>,
+        full_path: &'a GenericPlainPath,
+    ) -> Self {
         Self {
-            full_path: &path,
-            base_def: group.import(&path.base, make_def_parser(&path.base)),
-            params: path
+            full_path,
+            base_def: group.import(&full_path.base, make_def_parser(&full_path.base)),
+            params: full_path
                 .iter_generics()
                 .map(|part| Self::new(group, part))
                 .collect(),
@@ -64,7 +67,9 @@ impl<'a> GenericItemDef<'a> {
         &self.full_path.base
     }
 
-    pub fn validate_comp(&self, errors: &mut TokenStream) {
+    // === Component handling === //
+
+    pub fn comp_validate(&self, errors: &mut TokenStream) -> Result<(), ()> {
         match &*self.base_def {
             ItemDef::Component(comp) => {
                 if comp.generics.len() != self.params.len() {
@@ -75,8 +80,8 @@ impl<'a> GenericItemDef<'a> {
                                 format!(
                                     "missing generic parameters: {}",
                                     format_list(
-                                        comp.generics.iter().skip(self.params.len() - 1),
-                                        &','
+                                        comp.generics.iter().skip(self.params.len()),
+                                        &", "
                                     )
                                 ),
                             )
@@ -90,23 +95,37 @@ impl<'a> GenericItemDef<'a> {
                             );
                         }
                     }
+
+                    return Err(());
                 }
 
                 for para in &self.params {
-                    para.validate_comp(errors);
+                    para.comp_validate(errors)?;
                 }
+
+                Ok(())
             }
-            ItemDef::Bundle(_) => errors.extend(
-                Error::new(
-                    self.full_path.span(),
-                    "expected a component, bound a bundle",
-                )
-                .into_compile_error(),
-            ),
+            ItemDef::Bundle(_) => {
+                errors.extend(
+                    Error::new(
+                        self.full_path.span(),
+                        "expected a component, bound a bundle",
+                    )
+                    .into_compile_error(),
+                );
+                Err(())
+            }
         }
     }
 
-    pub fn compute_id(&self) -> Ident {
+    pub fn comp_def(&self) -> &ComponentDef {
+        match &*self.base_def {
+            ItemDef::Component(base_def) => base_def,
+            ItemDef::Bundle(_) => unreachable!(),
+        }
+    }
+
+    pub fn comp_id(&self) -> Ident {
         let base_id = match &*self.base_def {
             ItemDef::Component(comp) => comp.id.clone(),
             ItemDef::Bundle(_) => unreachable!(),
@@ -116,26 +135,29 @@ impl<'a> GenericItemDef<'a> {
             Span::call_site(),
             [base_id]
                 .into_iter()
-                .chain(self.params.iter().map(|para| para.compute_id())),
+                .chain(self.params.iter().map(|para| para.comp_id())),
         )
     }
 
-    pub fn compute_name(&self) -> LitStr {
+    pub fn comp_name(&self) -> LitStr {
         let mut buffer = String::new();
-        self.compute_name_inner(&mut buffer);
+        self.comp_name_inner(&mut buffer);
         LitStr::new(&buffer, Span::call_site())
     }
 
-    fn compute_name_inner(&self, buffer: &mut String) {
-        let ItemDef::Component(base_def) = &*self.base_def else {
-            unreachable!()
-        };
+    fn comp_name_inner(&self, buffer: &mut String) {
+        let base_def = self.comp_def();
 
         buffer.push_str(&base_def.name.value());
         if !self.params.is_empty() {
             buffer.push('<');
+            let mut is_subsequent = false;
             for para in &self.params {
-                para.compute_name_inner(buffer);
+                if is_subsequent {
+                    buffer.push_str(", ");
+                }
+                is_subsequent = true;
+                para.comp_name_inner(buffer);
             }
             buffer.push('>');
         }

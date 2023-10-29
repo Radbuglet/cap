@@ -2,7 +2,7 @@ use cap::{cap, cx};
 use std::{any::Any, fmt};
 
 cap! {
-    pub access<T> = ();
+    pub access<T, V> = ();
     pub foo = u32;
     pub bar = i32;
     pub baz: Any;

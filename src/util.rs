@@ -17,10 +17,7 @@ use syn::{
 
 // === IDs === //
 
-pub fn combine_idents<'a, I: Borrow<Ident>>(
-    span: Span,
-    idents: impl IntoIterator<Item = I>,
-) -> Ident {
+pub fn combine_idents<I: Borrow<Ident>>(span: Span, idents: impl IntoIterator<Item = I>) -> Ident {
     let mut id = UNIQUE_IDENT_PREFIX.to_string();
     for ident in idents {
         let ident = ident.borrow().to_string();

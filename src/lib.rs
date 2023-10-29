@@ -46,7 +46,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         // Handle each kind of definition
         match kind {
-            syntax::CapDeclKind::CompTy(_, comp) => {
+            syntax::CapDeclKind::CompTy(_arrow, comp) => {
                 let id = unique_ident(name.span());
                 let (mod_id, exporter) = export(
                     vis,
@@ -70,7 +70,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     #exporter
                 }
             }
-            syntax::CapDeclKind::CompTrait(_, comp) => {
+            syntax::CapDeclKind::CompTrait(_arrow, comp) => {
                 if !generics.is_empty() {
                     return Error::new(
                         generics.span(),
@@ -132,26 +132,20 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let mut fields = HashMap::new();
                 let mut re_exports = TokenStream::new();
 
-                for (member, def) in members {
+                for (member, ir) in members {
                     match member {
-                        CapDeclBundleElement::Component(mutability, full_path) => {
-                            // Ensure that this is, indeed, a component.
-                            let ItemDef::Component(def) = def.base_def.into_inner() else {
-                                errors.extend(
-                                    Error::new(
-                                        full_path.span(),
-                                        "expected component declaration, found bundle declaration",
-                                    )
-                                    .into_compile_error(),
-                                );
+                        CapDeclBundleElement::Component(mutability, _) => {
+                            // Validate this as a component
+                            if ir.comp_validate(&mut errors).is_err() {
                                 continue;
-                            };
+                            }
 
-                            // Handle its generics
-                            let base_path = &full_path.base;
+                            // Compute its ID and base_path
+                            let id = ir.comp_id();
+                            let base_path = ir.base_path();
 
                             fields
-                                .entry(def.id.to_string())
+                                .entry(id.to_string())
                                 .or_insert_with(|| {
                                     let re_exported_as = unique_ident(Span::call_site());
 
@@ -160,13 +154,13 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                     });
 
                                     BundleMemberDef {
-                                        id: def.id.clone(),
-                                        name: def.name.clone(),
+                                        id,
+                                        name: ir.comp_name(),
                                         is_mutable: LitBool::new(
                                             mutability.is_mutable(),
                                             Span::call_site(),
                                         ),
-                                        is_trait: def.is_trait.clone(),
+                                        is_trait: ir.comp_def().is_trait.clone(),
                                         re_exported_as,
                                         last_applied_generic: None,
                                     }
@@ -175,7 +169,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 .value |= mutability.is_mutable();
                         }
                         CapDeclBundleElement::Bundle(path) => {
-                            let ItemDef::Bundle(def) = def.base_def.into_inner() else {
+                            let ItemDef::Bundle(def) = ir.base_def.into_inner() else {
                                 errors.extend(
                                     Error::new(
                                         path.span(),
