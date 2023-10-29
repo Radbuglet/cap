@@ -2,13 +2,18 @@ use cap::{cap, cx};
 use std::{any::Any, fmt};
 
 cap! {
-    pub access<T, V> = ();
+    pub access<T, V> = [(T, V); 0];
+    pub access2<T> = [T; 0];
     pub foo = u32;
     pub bar = i32;
     pub baz: Any;
     pub faz: fmt::Debug;
     pub maz => mut foo, ref bar, ref baz;
-    pub laz => maz, maz, mut baz, mut faz;
+    pub laz => maz, mut baz, mut faz;
+    pub jds => mut access<access<foo, bar>, bar>;
+
+    pub ahh => mut foo, ref bar;
+    pub lahs => access2<ahh>;
 }
 
 impl<B: maz::TyBundle> maz::Bundle<'_, B> {

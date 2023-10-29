@@ -64,7 +64,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         #[allow(unused)]
                         use super::*;
 
-                        #vis type CompTy = #comp;
+                        #vis type CompTy #generics = #comp;
                     }
 
                     #exporter
@@ -142,16 +142,23 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                             // Compute its ID and base_path
                             let id = ir.comp_id();
-                            let base_path = ir.base_path();
 
                             fields
                                 .entry(id.to_string())
                                 .or_insert_with(|| {
-                                    let re_exported_as = unique_ident(Span::call_site());
+                                    if ir.generics.is_empty() {
+                                        let base_path = ir.base_path();
 
-                                    re_exports.extend(quote! {
-                                        #vis use #base_path::CompTy as #re_exported_as;
-                                    });
+                                        re_exports.extend(quote! {
+                                            #vis use #base_path::CompTy as #id;
+                                        });
+                                    } else {
+                                        let import_target = ir.comp_use_path();
+
+                                        re_exports.extend(quote! {
+                                            #vis type #id = #import_target;
+                                        });
+                                    }
 
                                     BundleMemberDef {
                                         id,
@@ -161,47 +168,42 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                             Span::call_site(),
                                         ),
                                         is_trait: ir.comp_def().is_trait.clone(),
-                                        re_exported_as,
                                         last_applied_generic: None,
                                     }
                                 })
                                 .is_mutable
                                 .value |= mutability.is_mutable();
                         }
-                        CapDeclBundleElement::Bundle(path) => {
-                            let ItemDef::Bundle(def) = ir.base_def.into_inner() else {
-                                errors.extend(
-                                    Error::new(
-                                        path.span(),
-                                        "expected bundle declaration, found component declaration",
-                                    )
-                                    .into_compile_error(),
-                                );
+                        CapDeclBundleElement::Bundle(_) => {
+                            let Ok(members) = ir.bundle_validate_and_collect(&mut errors) else {
                                 continue;
                             };
 
-                            for def in &def.members.contents {
+                            for member in members {
                                 fields
-                                    .entry(def.id.to_string())
+                                    .entry(member.data.id.to_string())
                                     .or_insert_with(|| {
-                                        let its_reexport = &def.re_exported_as;
-                                        let re_exported_as = unique_ident(Span::call_site());
+                                        let id = &member.data.id;
+                                        let from_path = &member.from_path;
 
-                                        re_exports.extend(
-											quote! { #vis use #path::#its_reexport as #re_exported_as; },
-										);
+                                        if member.from_path_is_type {
+                                            re_exports
+                                                .extend(quote! { #vis type #id = #from_path; });
+                                        } else {
+                                            re_exports
+                                                .extend(quote! { #vis use #from_path as #id; });
+                                        }
 
                                         BundleMemberDef {
-                                            id: def.id.clone(),
-                                            name: def.name.clone(),
-                                            is_mutable: def.is_mutable.clone(),
-                                            is_trait: def.is_trait.clone(),
-                                            re_exported_as,
+                                            id: member.data.id.clone(),
+                                            name: member.data.name.clone(),
+                                            is_mutable: member.data.is_mutable.clone(),
+                                            is_trait: member.data.is_trait.clone(),
                                             last_applied_generic: None,
                                         }
                                     })
                                     .is_mutable
-                                    .value |= def.is_mutable.value;
+                                    .value |= member.data.is_mutable.value;
                             }
                         }
                     }
@@ -220,7 +222,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 for field in fields.values() {
                     let id = &field.id;
-                    let re_exported_as = &field.re_exported_as;
+                    let generic_fwd_name = unique_ident(Span::call_site());
                     let mutability = if field.is_mutable.value {
                         quote! { mut }
                     } else {
@@ -230,19 +232,19 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     if field.is_trait.value {
                         ty_bundle_decl_body.extend(quote! {
                             #[allow(non_camel_case_types)]
-                            type #id: ?Sized + #re_exported_as;
+                            type #id: ?Sized + #id;
                         });
 
                         ty_bundle_generic_decls.extend(quote! {
-                            #id: ?Sized + #re_exported_as,
+                            #generic_fwd_name: ?Sized + #id,
                         });
 
                         ty_bundle_generic_tup_fwds.extend(quote! {
-                            ::core::marker::PhantomData<#id>,
+                            ::core::marker::PhantomData<#generic_fwd_name>,
                         });
 
                         ty_bundle_generic_body_fwds.extend(quote! {
-                            type #id = #id;
+                            type #id = #generic_fwd_name;
                         });
 
                         bundle_fields.extend(quote! {
@@ -250,7 +252,7 @@ pub fn __cap_single(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         });
                     } else {
                         bundle_fields.extend(quote! {
-                            #vis #id: &'a #mutability #re_exported_as,
+                            #vis #id: &'a #mutability #id,
                         });
                     }
                 }
@@ -432,7 +434,7 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                                     if let FieldEntry::Missing = req {
                                         let get_path_full = &field_req.path;
-                                        let get_reexport = &field_info.re_exported_as;
+                                        let get_reexport = &field_info.id;
                                         let value_getter = &field_req.take_from;
 
                                         *req = FieldEntry::Present(
@@ -522,7 +524,9 @@ pub fn cx(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro]
 #[doc(hidden)]
 pub fn __ra_cap_single_hack(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    __cap_single(input)
+    let out = __cap_single(input);
+    eprintln!("{out}");
+    out
 }
 
 #[proc_macro]
