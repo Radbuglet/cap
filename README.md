@@ -149,27 +149,27 @@ You can then wrap other components or bundles in generic components while defini
 use cap::cap;
 
 cap! {
-	pub access_token<T> = AccessToken<T>;
+    pub access_token<T> = AccessToken<T>;
 
-	pub my_component1 = ...;
-	pub my_component2 = ...;
-	pub my_component3 = ...;
-	pub my_component4 = ...;
+    pub my_component1 = ...;
+    pub my_component2 = ...;
+    pub my_component3 = ...;
+    pub my_component4 = ...;
 
-	// You can wrap individual components like so...
-	pub my_bundle1 => mut my_component1, mut my_component2, ref access_token<my_component3>;
+    // You can wrap individual components like so...
+    pub my_bundle1 => mut my_component1, mut my_component2, ref access_token<my_component3>;
 
-	// ...or wrap every component in a bundle like so...
-	pub my_bundle2 => access_token<my_bundle_1>, mut my_component_4;
+    // ...or wrap every component in a bundle like so...
+    pub my_bundle2 => access_token<my_bundle_1>, mut my_component_4;
 
-	// Which is equivalent to writing...
-	pub my_bundle2 =>
-		// (expansion of `access_token<my_bundle_1>`)
-		mut access_token<my_component1>,
-		mut access_token<my_component2>,
-		ref access_token<my_component3>,  // Note that double-wraps are reduced to single wraps.
-		// (regular component list)
-		mut my_component_4;
+    // Which is equivalent to writing...
+    pub my_bundle2 =>
+        // (expansion of `access_token<my_bundle_1>`)
+        mut access_token<my_component1>,
+        mut access_token<my_component2>,
+        ref access_token<my_component3>,  // Note that double-wraps are reduced to single wraps.
+        // (regular component list)
+        mut my_component_4;
 }
 ```
 
